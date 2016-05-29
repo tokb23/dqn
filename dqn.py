@@ -23,9 +23,12 @@ PATH = "./saved_networks"
 
 
 class DQN():
-    def __init__(self):
+    def __init__(self, env):
+        self.state = self.set_init_state(env)
+        self.epsilon = INITIAL_EPSILON
+        self.time = 0
         self.replay_memory = deque()
-        self.input, self.output, self.a, self.y, self.train_step = cnn()
+        self.x, self.output, self.a, self.y, self.train_step = self.cnn()
 
         # save and load networks
         self.saver = tf.train.Saver()
@@ -41,31 +44,31 @@ class DQN():
             print "Could not find old network weights"
 
     def cnn(self):
-        input = tf.placeholder(tf.float32, [None, GRID_SIZE, GRID_SIZE, FRAMES]
+        x = tf.placeholder(tf.float32, [None, GRID_SIZE, GRID_SIZE, FRAMES])
 
-        w1 = weight_variable([8, 8, 4, 32])
-        b1 = bias_variable([32])
-        h_conv1 = tf.nn.relu(conv2d(x, w1, 4) + b1)
-        h_pool1 = max_pool_2x2(h_conv1)
+        w1 = self.weight_variable([8, 8, 4, 32])
+        b1 = self.bias_variable([32])
+        h_conv1 = tf.nn.relu(self.conv2d(x, w1, 4) + b1)
+        h_pool1 = self.max_pool_2x2(h_conv1)
 
-        w2 = weight_variable([4, 4, 32, 64])
-        b2 = bias_variable([64])
-        h_conv2 = tf.nn.relu(conv2d(h_pool1, w2, 2) + b2)
+        w2 = self.weight_variable([4, 4, 32, 64])
+        b2 = self.bias_variable([64])
+        h_conv2 = tf.nn.relu(self.conv2d(h_pool1, w2, 2) + b2)
 
-        w3 = weight_variable([3, 3, 64, 64])
-        b3 = bias_variable([64])
-        h_conv3 = tf.nn.relu(conv2d(h_conv2, w3, 1) + b3)
+        w3 = self.weight_variable([3, 3, 64, 64])
+        b3 = self.bias_variable([64])
+        h_conv3 = tf.nn.relu(self.conv2d(h_conv2, w3, 1) + b3)
 
-        w_fc1 = weight_variable([1600, 512])
-        b_fc1 = bias_variable([512])
+        w_fc1 = self.weight_variable([1600, 512])
+        b_fc1 = self.bias_variable([512])
 
         h_conv3_flat = tf.reshape(h_conv3, [-1, 1600])
-        h_fc1 = tf.nn.relu(tf.matmul(h_conv3_flat, W_fc1) + b_fc1)
+        h_fc1 = tf.nn.relu(tf.matmul(h_conv3_flat, w_fc1) + b_fc1)
 
-        W_fc2 = weight_variable([512, ACTIONS])
-        b_fc2 = bias_variable([ACTIONS])
+        w_fc2 = self.weight_variable([512, ACTIONS])
+        b_fc2 = self.bias_variable([ACTIONS])
 
-        output = tf.matmul(h_fc1, W_fc2) + b_fc2
+        output = tf.matmul(h_fc1, w_fc2) + b_fc2
 
         a = tf.placeholder(tf.float32, [None, ACTIONS])
         y = tf.placeholder(tf.float32, [None])
@@ -73,7 +76,7 @@ class DQN():
         cost = tf.reduce_mean(tf.square(y - apx_q))
         train_step = tf.train.AdamOptimizer(1e-6).minimize(cost)
 
-        return input, output, a, y, train_step
+        return x, output, a, y, train_step
 
     def weight_variable(self, shape):
         initial = tf.truncated_normal(shape, stddev=0.01)
@@ -89,22 +92,15 @@ class DQN():
     def max_pool_2x2(self, x):
         return tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="SAME")
 
-
-class Agent(DQN):
-    def __init__(self, env):
-        self.state = set_init_state(env)
-        self.epsilon = INITIAL_EPSILON
-        self.time = 0
-
     def set_init_state(self, env):
-        action0 = np.array([1,0,0,0,0,0]) # do nothing
+        action0 = np.array([1, 0, 0, 0, 0, 0])  # do nothing
         frame, _, _ = env.frame_step(action0)
         frame = cv2.cvtColor(cv2.resize(frame, (80, 80)), cv2.COLOR_BGR2GRAY)
         _, frame = cv2.threshold(frame, 1, 255, cv2.THRESH_BINARY)
-        return np.stack((frame, frame, frame, frame), axis = 2)
+        return np.stack((frame, frame, frame, frame), axis=2)
 
     def get_action(self):
-        qw = self.output.eval(feed_dict={self.input: [self.state]})[0]
+        qw = self.output.eval(feed_dict={self.x: [self.state]})[0]
         action = np.zeros([ACTIONS])
         action_index = 0
         if random.random() <= self.epsilon or self.time <= OBSERVE:
@@ -120,12 +116,12 @@ class Agent(DQN):
         return action
 
     def learn(self, frame, action, reward, terminal):
-        next_state = np.append(frame, state[:,:,1:], axis = 2)
+        next_state = np.append(frame, self.state[:, :, 1:], axis = 2)
         self.replay_memory.append((self.state, action, reward, next_state, terminal))
         if len(self.replay_memory) > REPLAY_MEMORY:
             self.replay_memory.popleft()
         if self.time > OBSERVE:
-            train_dqn()
+            self.train_dqn()
 
         mode = ""
         if self.time <= OBSERVE:
@@ -147,7 +143,7 @@ class Agent(DQN):
         next_state_batch = [data[3] for data in minibatch]
 
         y_batch = []
-        qw_batch = self.output.eval(feed_dict={self.input: next_state_batch})
+        qw_batch = self.output.eval(feed_dict={self.x: next_state_batch})
         for i in range(0, BATCH_SIZE):
             terminal = minibatch[i][4]
             if terminal:
@@ -158,8 +154,8 @@ class Agent(DQN):
         self.train_step.run(feed_dict={
             self.y: y_batch,
             self.a: action_batch,
-            self.input: state_batch
-            })
+            self.x: state_batch
+        })
 
         if self.time % 1000 == 0:
             self.saver.save(self.sess, PATH + '/network' + '-dqn', global_step=self.time)
@@ -170,15 +166,17 @@ def preprocess(frame):
     _, frame = cv2.threshold(frame, 1, 255, cv2.THRESH_BINARY)
     return np.reshape(frame, (80, 80, 1))
 
+
 def playgame():
     env = game.GameState()
-    agent = Agent(env)
+    agent = DQN(env)
 
     while True:
         action = agent.get_action()
         frame, reward, terminal = env.frame_step(action)
         frame = preprocess(frame)
         agent.learn(frame, action, reward, terminal)
+
 
 def main():
     playgame()
