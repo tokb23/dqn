@@ -89,10 +89,10 @@ class Agent():
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.initialize_all_variables())
 
-        # save and load networks
         if not os.path.exists(SAVER_PATH):
             os.mkdir(SAVER_PATH)
 
+        # load network
         if LOAD_NETWORK:
             self.load_network()
 
@@ -135,6 +135,7 @@ class Agent():
         self.a = tf.placeholder(tf.int64, [None])
         self.target = tf.placeholder(tf.float32, [None])
 
+        # convert to one hot vector
         a_one_hot = tf.one_hot(self.a, self.num_actions, 1.0, 0.0)
         q_a = tf.reduce_sum(tf.mul(self.q, a_one_hot), reduction_indices=1)
 
@@ -168,8 +169,7 @@ class Agent():
             if random.random() < self.epsilon or self.time_step < REPLAY_START_SIZE:
                 self.action = random.randrange(self.num_actions)
             else:
-                q = self.q.eval(feed_dict={self.s: [self.state]})[0]
-                self.action = np.argmax(q)
+                self.action = np.argmax(self.q.eval(feed_dict={self.s: [self.state]})[0])
 
         if self.epsilon > FINAL_EPSILON and self.time_step > REPLAY_START_SIZE:
             self.epsilon -= self.epsilon_decay
@@ -178,9 +178,12 @@ class Agent():
 
     def run(self, frame, action, reward, done):
         next_state = np.append(frame, self.state[:, :, 1:], axis=2)
+
+        # store transition in replay memory
         self.D.append((self.state, action, reward, next_state, done))
         if len(self.D) > NUM_REPLAY_MEMORY:
             self.D.popleft()
+
         if self.time_step > REPLAY_START_SIZE:
             if self.time_step % TRAIN_FREQ == 0:
                 self.train_network()
@@ -215,6 +218,7 @@ class Agent():
         self.time_step += 1
 
     def train_network(self):
+        # sample random minibatch of transition from replay memory
         minibatch = random.sample(self.D, BATCH_SIZE)
         state_batch = [data[0] for data in minibatch]
         action_batch = [data[1] for data in minibatch]
@@ -227,9 +231,11 @@ class Agent():
         reward_batch = np.sign(reward_batch)
 
         target_batch = []
-        q_batch = self.qt.eval(feed_dict={self.st: next_state_batch})
+
         # convert 'True' to 1, 'False' to 0
         done_batch = np.array(done_batch) + 0
+
+        q_batch = self.qt.eval(feed_dict={self.st: next_state_batch})
 
         target_batch = reward_batch + (1 - done_batch) * GAMMA * np.max(q_batch)
 
