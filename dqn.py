@@ -26,21 +26,21 @@ CONV3_STRIDE = 1
 FC_NUM_UNITS = 512
 
 # Agent parameters
-NUM_EPISODES = 10000
+NUM_EPISODES = 10000  # number of episodes
 STATE_LENGTH = 4  # number of most recent frames as input
 GAMMA = 0.99  # discount factor
-EXPLORATION_STEPS = 5000  # 100000  # number of steps over which epsilon decays
-REPLAY_START_SIZE = 1000  # 5000  # number of steps before training starts
+EXPLORATION_STEPS = 5000  # number of steps over which epsilon decays
+REPLAY_START_SIZE = 1000  # number of steps before training starts
 FINAL_EPSILON = 0.1  # final value of epsilon in epsilon-greedy
 INITIAL_EPSILON = 1.0  # initial value of epsilon in epsilon-greedy
 NUM_REPLAY_MEMORY = 10000  # replay memory size
 BATCH_SIZE = 32  # mini batch size
-UPDATE_FREQ = 1000
-ACTION_FREQ = 4
-TRAIN_FREQ = 4
-LEARNING_RATE = 0.00025
-MOMENTUM = 0.95
-MIN_GRAD = 0.01
+UPDATE_FREQ = 1000  # update frequency for target network
+ACTION_FREQ = 4  # action frequency
+TRAIN_FREQ = 4  # training frequency
+LEARNING_RATE = 0.00025  # learning rate
+MOMENTUM = 0.95  # momentum for rmsprop
+MIN_GRAD = 0.01  # small value for rmsprop
 SAVER_PATH = "./saved_networks"
 
 # values for learning rate decay
@@ -87,6 +87,8 @@ class Agent():
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.initialize_all_variables())
 
+        if not os.path.exists(SAVER_PATH):
+            os.mkdir(SAVER_PATH)
         # self.load_network()
 
     def build_network(self):
@@ -164,8 +166,6 @@ class Agent():
         return tf.nn.conv2d(x, w, strides=[1, stride, stride, 1], padding="VALID")
 
     def load_network(self):
-        if not os.path.exists(SAVER_PATH):
-            os.mkdir(SAVER_PATH)
         checkpoint = tf.train.get_checkpoint_state(SAVER_PATH)
         if checkpoint and checkpoint.model_checkpoint_path:
             self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
@@ -173,7 +173,7 @@ class Agent():
         else:
             print 'Training new network'
 
-    def set_init_input(self, frame):
+    def set_initial_input(self, frame):
         frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
         self.state = np.stack((frame, frame, frame, frame), axis=2)
 
@@ -182,7 +182,8 @@ class Agent():
             if random.random() < self.epsilon or self.time_step < REPLAY_START_SIZE:
                 self.action = random.randrange(self.num_actions)
             else:
-                self.action = np.argmax(self.q.eval(feed_dict={self.s: self.state})[0])
+                q = self.q.eval(feed_dict={self.s: [self.state]})[0]
+                self.action = np.argmax(q)
         else:
             self.action = self.action
 
@@ -216,8 +217,8 @@ class Agent():
             print 'TIMESTEP: {0} / STATE: {1} / EPSILON: {2}'.format(
                 self.time_step, mode, self.epsilon)
 
-        if self.time_step > REPLAY_START_SIZE and self.time_step % 1000 == 0:
-            print 'LOSS: {0} / Q_VALUE: {1}'.format(self.loss, self.q.mean())
+        # if self.time_step > REPLAY_START_SIZE and self.time_step % 1000 == 0:
+            # print 'LOSS: {0} / Q_VALUE: {1}'.format(self.loss, self.q.mean())
         # *********************************
         # *********************************
 
@@ -248,7 +249,7 @@ class Agent():
 
         target_batch = reward_batch + (1 - done_batch) * GAMMA * np.max(q_batch)
 
-        self.q, self.loss = self.sess.run([self.q, self.loss], feed_dict={
+        self.train_step.run(feed_dict={
             self.target: target_batch,
             self.a: action_batch,
             self.s: state_batch
@@ -267,7 +268,7 @@ def main():
     for eposode in range(NUM_EPISODES):
         done = False
         observation = env.reset()
-        agent.set_init_input(observation)
+        agent.set_initial_input(observation)
         while not done:
             env.render()
             action = agent.get_action()
