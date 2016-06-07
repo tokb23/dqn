@@ -9,23 +9,9 @@ import tensorflow as tf
 from collections import deque
 
 
-# Environment parameters
+# Environment/Agent parameters
 ENV_NAME = 'Breakout-v0'
 FRAME_SIZE = 84
-
-# Network parameters
-CONV1_NUM_FILTERS = 32
-CONV1_FILTER_SIZE = 8
-CONV1_STRIDE = 4
-CONV2_NUM_FILTERS = 64
-CONV2_FILTER_SIZE = 4
-CONV2_STRIDE = 2
-CONV3_NUM_FILTERS = 64
-CONV3_FILTER_SIZE = 3
-CONV3_STRIDE = 1
-FC_NUM_UNITS = 512
-
-# Agent parameters
 NUM_EPISODES = 10000  # number of episodes
 STATE_LENGTH = 4  # number of most recent frames as input
 GAMMA = 0.99  # discount factor
@@ -41,7 +27,20 @@ TRAIN_FREQ = 4  # training frequency
 LEARNING_RATE = 0.00025  # learning rate
 MOMENTUM = 0.95  # momentum for rmsprop
 MIN_GRAD = 0.01  # small value for rmsprop
-SAVER_PATH = "./saved_networks"
+LOAD_NETWORK = False
+SAVER_PATH = './saved_networks'
+
+# Network parameters
+CONV1_NUM_FILTERS = 32
+CONV1_FILTER_SIZE = 8
+CONV1_STRIDE = 4
+CONV2_NUM_FILTERS = 64
+CONV2_FILTER_SIZE = 4
+CONV2_STRIDE = 2
+CONV3_NUM_FILTERS = 64
+CONV3_FILTER_SIZE = 3
+CONV3_STRIDE = 1
+FC_NUM_UNITS = 512
 
 # values for learning rate decay
 """
@@ -54,21 +53,23 @@ learning_rate_decay_rate = 0.96
 
 class Agent():
     def __init__(self, env):
-        self.num_actions = env.action_space.n
+        self.num_actions = env.action_space.n  # number of actions
         self.epsilon = INITIAL_EPSILON
         self.epsilon_decay = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
         self.time_step = 0
         self.action = 0
-        # self.state = np.zeros([self.STATE_LENGTH, self.frame_height, self.frame_width])
-        self.D = deque()
+        self.D = deque()  # replay memory
+
         # q network
         self.s, self.w_conv1, self.b_conv1, self.w_conv2, self.b_conv2, \
             self.w_conv3, self.b_conv3, self.w_fc, self.b_fc, self.w_q, self.b_q, \
             self.q = self.build_network()
+
         # target q network
         self.st, self.w_conv1t, self.b_conv1t, self.w_conv2t, self.b_conv2t, \
             self.w_conv3t, self.b_conv3t, self.w_fct, self.b_fct, self.w_qt, self.b_qt, \
             self.qt = self.build_network()
+
         # update operation for target q network
         self.update_op = [self.w_conv1t.assign(self.w_conv1),
                         self.b_conv1t.assign(self.b_conv1),
@@ -80,16 +81,20 @@ class Agent():
                         self.b_fct.assign(self.b_fc),
                         self.w_qt.assign(self.w_q),
                         self.b_qt.assign(self.b_q)]
+
         # training operation
         self.build_training_op()
-        # save and load networks
+
         self.saver = tf.train.Saver()
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.initialize_all_variables())
 
+        # save and load networks
         if not os.path.exists(SAVER_PATH):
             os.mkdir(SAVER_PATH)
-        # self.load_network()
+
+        if LOAD_NETWORK:
+            self.load_network()
 
     def build_network(self):
         s = tf.placeholder(tf.float32, [None, FRAME_SIZE, FRAME_SIZE, STATE_LENGTH])
@@ -154,25 +159,6 @@ class Agent():
         self.train_step = tf.train.RMSPropOptimizer(LEARNING_RATE,
                             momentum=MOMENTUM, epsilon=MIN_GRAD).minimize(self.loss)
 
-    def weight_variable(self, shape):
-        initial = tf.truncated_normal(shape, stddev=0.01)
-        return tf.Variable(initial)
-
-    def bias_variable(self, shape):
-        initial = tf.constant(0.01, shape=shape)
-        return tf.Variable(initial)
-
-    def conv2d(self, x, w, stride):
-        return tf.nn.conv2d(x, w, strides=[1, stride, stride, 1], padding="VALID")
-
-    def load_network(self):
-        checkpoint = tf.train.get_checkpoint_state(SAVER_PATH)
-        if checkpoint and checkpoint.model_checkpoint_path:
-            self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
-            print 'Successfully loaded: {0}'.format(checkpoint.model_checkpoint_path)
-        else:
-            print 'Training new network'
-
     def set_initial_input(self, frame):
         frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
         self.state = np.stack((frame, frame, frame, frame), axis=2)
@@ -184,8 +170,6 @@ class Agent():
             else:
                 q = self.q.eval(feed_dict={self.s: [self.state]})[0]
                 self.action = np.argmax(q)
-        else:
-            self.action = self.action
 
         if self.epsilon > FINAL_EPSILON and self.time_step > REPLAY_START_SIZE:
             self.epsilon -= self.epsilon_decay
@@ -255,6 +239,25 @@ class Agent():
             self.s: state_batch
         })
 
+    def load_network(self):
+        checkpoint = tf.train.get_checkpoint_state(SAVER_PATH)
+        if checkpoint and checkpoint.model_checkpoint_path:
+            self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
+            print 'Successfully loaded: {0}'.format(checkpoint.model_checkpoint_path)
+        else:
+            print 'Training new network'
+
+    def weight_variable(self, shape):
+        initial = tf.truncated_normal(shape, stddev=0.01)
+        return tf.Variable(initial)
+
+    def bias_variable(self, shape):
+        initial = tf.constant(0.01, shape=shape)
+        return tf.Variable(initial)
+
+    def conv2d(self, x, w, stride):
+        return tf.nn.conv2d(x, w, strides=[1, stride, stride, 1], padding='VALID')
+
 
 def preprocess(frame):
     frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
@@ -277,5 +280,5 @@ def main():
             agent.run(observation, action, reward, done)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
