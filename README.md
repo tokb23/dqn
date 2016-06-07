@@ -1,2 +1,2 @@
 # DQN Game
-This is an implementation for DQN Game in TensorFlow.
+This is an implementation of DQN in TensorFlow using OpenAI Gym.

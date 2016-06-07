@@ -1,82 +1,156 @@
 # coding:utf-8
 
-import tensorflow as tf
-import numpy as np
-import random
-from collections import deque
-import cv2
-import tetris as game
 import os
+import cv2
+import gym
+import random
+import numpy as np
+import tensorflow as tf
+from collections import deque
 
 
-ACTIONS = 6
-GAMMA = 0.99
-OBSERVE = 500.
-EXPLORE = 500.
-FINAL_EPSILON = 0.05
-INITIAL_EPSILON = 1.0
-REPLAY_MEMORY = 100000
-BATCH_SIZE = 32
-FRAMES = 4
-GRID_SIZE = 80
-PATH = "./saved_networks"
+# Environment parameters
+ENV_NAME = 'Breakout-v0'
+FRAME_SIZE = 84
+
+# Network parameters
+CONV1_NUM_FILTERS = 32
+CONV1_FILTER_SIZE = 8
+CONV1_STRIDE = 4
+CONV2_NUM_FILTERS = 64
+CONV2_FILTER_SIZE = 4
+CONV2_STRIDE = 2
+CONV3_NUM_FILTERS = 64
+CONV3_FILTER_SIZE = 3
+CONV3_STRIDE = 1
+FC_NUM_UNITS = 512
+
+# Agent parameters
+NUM_EPISODES = 10000
+STATE_LENGTH = 4  # number of most recent frames as input
+GAMMA = 0.99  # discount factor
+EXPLORATION_STEPS = 5000  # 100000  # number of steps over which epsilon decays
+REPLAY_START_SIZE = 1000  # 5000  # number of steps before training starts
+FINAL_EPSILON = 0.1  # final value of epsilon in epsilon-greedy
+INITIAL_EPSILON = 1.0  # initial value of epsilon in epsilon-greedy
+NUM_REPLAY_MEMORY = 10000  # replay memory size
+BATCH_SIZE = 32  # mini batch size
+UPDATE_FREQ = 1000
+ACTION_FREQ = 4
+TRAIN_FREQ = 4
+LEARNING_RATE = 0.00025
+MOMENTUM = 0.95
+MIN_GRAD = 0.01
+SAVER_PATH = "./saved_networks"
+
+# values for learning rate decay
+"""
+initial_learning_rate = 0.0025
+final_learning_rate = 0.00025
+learning_rate_decay_step = 50000
+learning_rate_decay_rate = 0.96
+"""
 
 
-class DQN():
+class Agent():
     def __init__(self, env):
-        self.state = self.set_init_state(env)
+        self.num_actions = env.action_space.n
         self.epsilon = INITIAL_EPSILON
-        self.time = 0
-        self.replay_memory = deque()
-        self.x, self.output, self.a, self.y, self.train_step = self.cnn()
-
+        self.epsilon_decay = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
+        self.time_step = 0
+        self.action = 0
+        # self.state = np.zeros([self.STATE_LENGTH, self.frame_height, self.frame_width])
+        self.D = deque()
+        # q network
+        self.s, self.w_conv1, self.b_conv1, self.w_conv2, self.b_conv2, \
+            self.w_conv3, self.b_conv3, self.w_fc, self.b_fc, self.w_q, self.b_q, \
+            self.q = self.build_network()
+        # target q network
+        self.st, self.w_conv1t, self.b_conv1t, self.w_conv2t, self.b_conv2t, \
+            self.w_conv3t, self.b_conv3t, self.w_fct, self.b_fct, self.w_qt, self.b_qt, \
+            self.qt = self.build_network()
+        # update operation for target q network
+        self.update_op = [self.w_conv1t.assign(self.w_conv1),
+                        self.b_conv1t.assign(self.b_conv1),
+                        self.w_conv2t.assign(self.w_conv2),
+                        self.b_conv2t.assign(self.b_conv2),
+                        self.w_conv3t.assign(self.w_conv3),
+                        self.b_conv3t.assign(self.b_conv3),
+                        self.w_fct.assign(self.w_fc),
+                        self.b_fct.assign(self.b_fc),
+                        self.w_qt.assign(self.w_q),
+                        self.b_qt.assign(self.b_q)]
+        # training operation
+        self.build_training_op()
         # save and load networks
         self.saver = tf.train.Saver()
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.initialize_all_variables())
-        if not os.path.exists(PATH):
-            os.mkdir(PATH)
-        checkpoint = tf.train.get_checkpoint_state(PATH)
-        if checkpoint and checkpoint.model_checkpoint_path:
-            self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
-            print "Successfully loaded:", checkpoint.model_checkpoint_path
-        else:
-            print "Could not find old network weights"
 
-    def cnn(self):
-        x = tf.placeholder(tf.float32, [None, GRID_SIZE, GRID_SIZE, FRAMES])
+        # self.load_network()
 
-        w1 = self.weight_variable([8, 8, 4, 32])
-        b1 = self.bias_variable([32])
-        h_conv1 = tf.nn.relu(self.conv2d(x, w1, 4) + b1)
-        h_pool1 = self.max_pool_2x2(h_conv1)
+    def build_network(self):
+        s = tf.placeholder(tf.float32, [None, FRAME_SIZE, FRAME_SIZE, STATE_LENGTH])
 
-        w2 = self.weight_variable([4, 4, 32, 64])
-        b2 = self.bias_variable([64])
-        h_conv2 = tf.nn.relu(self.conv2d(h_pool1, w2, 2) + b2)
+        w_conv1 = self.weight_variable([CONV1_FILTER_SIZE, CONV1_FILTER_SIZE,
+                                        STATE_LENGTH, CONV1_NUM_FILTERS])
+        b_conv1 = self.bias_variable([CONV1_NUM_FILTERS])
+        h_conv1 = tf.nn.relu(self.conv2d(s, w_conv1, CONV1_STRIDE) + b_conv1)
 
-        w3 = self.weight_variable([3, 3, 64, 64])
-        b3 = self.bias_variable([64])
-        h_conv3 = tf.nn.relu(self.conv2d(h_conv2, w3, 1) + b3)
+        w_conv2 = self.weight_variable([CONV2_FILTER_SIZE, CONV1_FILTER_SIZE,
+                                        CONV1_NUM_FILTERS, CONV2_NUM_FILTERS])
+        b_conv2 = self.bias_variable([CONV2_NUM_FILTERS])
+        h_conv2 = tf.nn.relu(self.conv2d(h_conv1, w_conv2, CONV2_STRIDE) + b_conv2)
 
-        w_fc1 = self.weight_variable([1600, 512])
-        b_fc1 = self.bias_variable([512])
+        w_conv3 = self.weight_variable([CONV3_FILTER_SIZE, CONV3_FILTER_SIZE,
+                                        CONV2_NUM_FILTERS, CONV3_NUM_FILTERS])
+        b_conv3 = self.bias_variable([CONV3_NUM_FILTERS])
+        h_conv3 = tf.nn.relu(self.conv2d(h_conv2, w_conv3, CONV3_STRIDE) + b_conv3)
 
-        h_conv3_flat = tf.reshape(h_conv3, [-1, 1600])
-        h_fc1 = tf.nn.relu(tf.matmul(h_conv3_flat, w_fc1) + b_fc1)
+        h_conv3_shape = h_conv3.get_shape().as_list()
+        h_conv3_flat_shape = h_conv3_shape[1] * h_conv3_shape[2] * h_conv3_shape[3]
+        h_conv3_flat = tf.reshape(h_conv3, [-1, h_conv3_flat_shape])
 
-        w_fc2 = self.weight_variable([512, ACTIONS])
-        b_fc2 = self.bias_variable([ACTIONS])
+        w_fc = self.weight_variable([h_conv3_flat_shape, FC_NUM_UNITS])
+        b_fc = self.bias_variable([FC_NUM_UNITS])
+        h_fc = tf.nn.relu(tf.matmul(h_conv3_flat, w_fc) + b_fc)
 
-        output = tf.matmul(h_fc1, w_fc2) + b_fc2
+        w_q = self.weight_variable([FC_NUM_UNITS, self.num_actions])
+        b_q = self.bias_variable([self.num_actions])
+        q = tf.matmul(h_fc, w_q) + b_q
 
-        a = tf.placeholder(tf.float32, [None, ACTIONS])
-        y = tf.placeholder(tf.float32, [None])
-        apx_q = tf.reduce_sum(tf.mul(output, a), reduction_indices=1)
-        cost = tf.reduce_mean(tf.square(y - apx_q))
-        train_step = tf.train.AdamOptimizer(1e-6).minimize(cost)
+        return s, w_conv1, b_conv1, w_conv2, b_conv2, w_conv3, b_conv3, w_fc, b_fc, w_q, b_q, q
 
-        return x, output, a, y, train_step
+    def update_target_q_network(self):
+        self.sess.run(self.update_op)
+
+    def build_training_op(self):
+        self.a = tf.placeholder(tf.int64, [None])
+        self.target = tf.placeholder(tf.float32, [None])
+
+        a_one_hot = tf.one_hot(self.a, self.num_actions, 1.0, 0.0)
+        q_a = tf.reduce_sum(tf.mul(self.q, a_one_hot), reduction_indices=1)
+
+        # clip the error term from the update 'target - q'
+        # to be between -1 and 1
+        error = self.target - q_a
+        clipped_error = tf.clip_by_value(error, -1, 1)
+        self.loss = tf.reduce_mean(tf.square(clipped_error))
+
+        """
+        global_step = tf.Variable(0, trainable=False)
+        learning_rate = tf.maximum(self.final_learning_rate,
+                            tf.train.exponential_decay(
+                                self.initial_learning_rate,
+                                global_step,
+                                self.learning_rate_decay_step,
+                                self.learning_rate_decay_rate,
+                                staircase=True
+                            ))
+        """
+
+        self.train_step = tf.train.RMSPropOptimizer(LEARNING_RATE,
+                            momentum=MOMENTUM, epsilon=MIN_GRAD).minimize(self.loss)
 
     def weight_variable(self, shape):
         initial = tf.truncated_normal(shape, stddev=0.01)
@@ -87,99 +161,119 @@ class DQN():
         return tf.Variable(initial)
 
     def conv2d(self, x, w, stride):
-        return tf.nn.conv2d(x, w, strides=[1, stride, stride, 1], padding="SAME")
+        return tf.nn.conv2d(x, w, strides=[1, stride, stride, 1], padding="VALID")
 
-    def max_pool_2x2(self, x):
-        return tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="SAME")
+    def load_network(self):
+        if not os.path.exists(SAVER_PATH):
+            os.mkdir(SAVER_PATH)
+        checkpoint = tf.train.get_checkpoint_state(SAVER_PATH)
+        if checkpoint and checkpoint.model_checkpoint_path:
+            self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
+            print 'Successfully loaded: {0}'.format(checkpoint.model_checkpoint_path)
+        else:
+            print 'Training new network'
 
-    def set_init_state(self, env):
-        action0 = np.array([1, 0, 0, 0, 0, 0])  # do nothing
-        frame, _, _ = env.frame_step(action0)
-        frame = cv2.cvtColor(cv2.resize(frame, (80, 80)), cv2.COLOR_BGR2GRAY)
-        _, frame = cv2.threshold(frame, 1, 255, cv2.THRESH_BINARY)
-        return np.stack((frame, frame, frame, frame), axis=2)
+    def set_init_input(self, frame):
+        frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
+        self.state = np.stack((frame, frame, frame, frame), axis=2)
 
     def get_action(self):
-        qw = self.output.eval(feed_dict={self.x: [self.state]})[0]
-        action = np.zeros([ACTIONS])
-        action_index = 0
-        if random.random() <= self.epsilon or self.time <= OBSERVE:
-            action_index = random.randrange(ACTIONS)
-            action[action_index] = 1
+        if self.time_step % ACTION_FREQ == 0:
+            if random.random() < self.epsilon or self.time_step < REPLAY_START_SIZE:
+                self.action = random.randrange(self.num_actions)
+            else:
+                self.action = np.argmax(self.q.eval(feed_dict={self.s: self.state})[0])
         else:
-            action_index = np.argmax(qw)
-            action[action_index] = 1
+            self.action = self.action
 
-        if self.epsilon > FINAL_EPSILON and self.time > OBSERVE:
-            self.epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+        if self.epsilon > FINAL_EPSILON and self.time_step > REPLAY_START_SIZE:
+            self.epsilon -= self.epsilon_decay
 
-        return action
+        return self.action
 
-    def learn(self, frame, action, reward, terminal):
-        next_state = np.append(frame, self.state[:, :, 1:], axis = 2)
-        self.replay_memory.append((self.state, action, reward, next_state, terminal))
-        if len(self.replay_memory) > REPLAY_MEMORY:
-            self.replay_memory.popleft()
-        if self.time > OBSERVE:
-            self.train_dqn()
+    def run(self, frame, action, reward, done):
+        next_state = np.append(frame, self.state[:, :, 1:], axis=2)
+        self.D.append((self.state, action, reward, next_state, done))
+        if len(self.D) > NUM_REPLAY_MEMORY:
+            self.D.popleft()
+        if self.time_step > REPLAY_START_SIZE:
+            if self.time_step % TRAIN_FREQ == 0:
+                self.train_network()
 
-        mode = ""
-        if self.time <= OBSERVE:
-            mode = "observe"
-        elif self.time > OBSERVE and self.time <= OBSERVE + EXPLORE:
-            mode = "explore"
-        else:
-            mode = "train"
-        print "TIMESTEP", self.time, "/ STATE", mode, "/ EPSILON", self.epsilon
+        if self.time_step % UPDATE_FREQ == 0:
+            self.update_target_q_network()
+
+        # *********************************
+        # **************debug**************
+        if self.time_step % 100 == 0:
+            if self.time_step <= REPLAY_START_SIZE:
+                mode = 'observe'
+            elif self.time_step > REPLAY_START_SIZE and \
+            self.time_step <= REPLAY_START_SIZE + EXPLORATION_STEPS:
+                mode = 'explore'
+            else:
+                mode = 'train'
+            print 'TIMESTEP: {0} / STATE: {1} / EPSILON: {2}'.format(
+                self.time_step, mode, self.epsilon)
+
+        if self.time_step > REPLAY_START_SIZE and self.time_step % 1000 == 0:
+            print 'LOSS: {0} / Q_VALUE: {1}'.format(self.loss, self.q.mean())
+        # *********************************
+        # *********************************
+
+        # save network
+        if self.time_step % 10000 == 0:
+            self.saver.save(self.sess,
+                    SAVER_PATH + '/network' + '-dqn', global_step=self.time_step)
 
         self.state = next_state
-        self.time += 1
+        self.time_step += 1
 
-    def train_dqn(self):
-        minibatch = random.sample(self.replay_memory, BATCH_SIZE)
+    def train_network(self):
+        minibatch = random.sample(self.D, BATCH_SIZE)
         state_batch = [data[0] for data in minibatch]
         action_batch = [data[1] for data in minibatch]
         reward_batch = [data[2] for data in minibatch]
         next_state_batch = [data[3] for data in minibatch]
+        done_batch = [data[4] for data in minibatch]
 
-        y_batch = []
-        qw_batch = self.output.eval(feed_dict={self.x: next_state_batch})
-        for i in range(0, BATCH_SIZE):
-            terminal = minibatch[i][4]
-            if terminal:
-                y_batch.append(reward_batch[i])
-            else:
-                y_batch.append(reward_batch[i] + GAMMA * np.max(qw_batch[i]))
+        # clip all positive rewards at 1 and all negative rewards at -1,
+        # leaving 0 rewards unchanged
+        reward_batch = np.sign(reward_batch)
 
-        self.train_step.run(feed_dict={
-            self.y: y_batch,
+        target_batch = []
+        q_batch = self.qt.eval(feed_dict={self.st: next_state_batch})
+        # convert 'True' to 1, 'False' to 0
+        done_batch = np.array(done_batch) + 0
+
+        target_batch = reward_batch + (1 - done_batch) * GAMMA * np.max(q_batch)
+
+        self.q, self.loss = self.sess.run([self.q, self.loss], feed_dict={
+            self.target: target_batch,
             self.a: action_batch,
-            self.x: state_batch
+            self.s: state_batch
         })
-
-        if self.time % 1000 == 0:
-            self.saver.save(self.sess, PATH + '/network' + '-dqn', global_step=self.time)
 
 
 def preprocess(frame):
-    frame = cv2.cvtColor(cv2.resize(frame, (80, 80)), cv2.COLOR_BGR2GRAY)
-    _, frame = cv2.threshold(frame, 1, 255, cv2.THRESH_BINARY)
-    return np.reshape(frame, (80, 80, 1))
-
-
-def playgame():
-    env = game.GameState()
-    agent = DQN(env)
-
-    while True:
-        action = agent.get_action()
-        frame, reward, terminal = env.frame_step(action)
-        frame = preprocess(frame)
-        agent.learn(frame, action, reward, terminal)
+    frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
+    return np.reshape(frame, (FRAME_SIZE, FRAME_SIZE, 1))
 
 
 def main():
-    playgame()
+    env = gym.make(ENV_NAME)
+    agent = Agent(env)
+
+    for eposode in range(NUM_EPISODES):
+        done = False
+        observation = env.reset()
+        agent.set_init_input(observation)
+        while not done:
+            env.render()
+            action = agent.get_action()
+            observation, reward, done, _ = env.step(action)
+            observation = preprocess(observation)
+            agent.run(observation, action, reward, done)
 
 
 if __name__ == "__main__":
