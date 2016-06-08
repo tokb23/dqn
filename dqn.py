@@ -27,7 +27,7 @@ TRAIN_FREQ = 4  # training frequency
 LEARNING_RATE = 0.00025  # learning rate
 MOMENTUM = 0.95  # momentum for rmsprop
 MIN_GRAD = 0.01  # small value for rmsprop
-LOAD_NETWORK = True
+LOAD_NETWORK = False
 SAVER_PATH = './saved_networks'
 SUMMARY_PATH = './summary'
 
@@ -52,6 +52,7 @@ class Agent():
         self.time_step = 0
         self.action = 0
         self.D = deque()  # replay memory
+        self.total_reward = 0
 
         # q network
         self.s, self.w_conv1, self.b_conv1, self.w_conv2, self.b_conv2, \
@@ -78,10 +79,10 @@ class Agent():
         # training operation
         self.build_training_op()
 
-        self.summary_op = tf.merge_all_summaries()
         self.saver = tf.train.Saver()
         self.sess = tf.InteractiveSession()
         self.summary_writer = tf.train.SummaryWriter(SUMMARY_PATH, self.sess.graph)
+        self.summary_op = tf.merge_all_summaries()
         self.sess.run(tf.initialize_all_variables())
 
         if not os.path.exists(SAVER_PATH):
@@ -178,6 +179,11 @@ class Agent():
 
         # *********************************
         # **************debug**************
+        self.total_reward += np.sign(reward)
+        if done:
+            print 'TOTAL_REWARD: {0}'.format(self.total_reward)
+            self.total_reward = 0
+
         if self.time_step % 100 == 0:
             if self.time_step <= REPLAY_START_SIZE:
                 mode = 'observe'
@@ -227,12 +233,12 @@ class Agent():
         })
 
         if self.time_step % 100 == 0:
-            summary_str, loss = self.sess.run([self.summary_op, self.loss], feed_dict={
+            summary_str, loss, q = self.sess.run([self.summary_op, self.loss, self.q], feed_dict={
                 self.s: state_batch,
                 self.a: action_batch,
                 self.target: target_batch
             })
-            print('TIMESTEP: {0} / LOSS: {1}'.format(self.time_step, loss))
+            print('LOSS: {0} / Q: {1}'.format(self.time_step, loss, q.mean()))
             self.summary_writer.add_summary(summary_str, self.time_step)
             self.summary_writer.flush()
 
