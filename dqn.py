@@ -27,8 +27,9 @@ TRAIN_FREQ = 4  # training frequency
 LEARNING_RATE = 0.00025  # learning rate
 MOMENTUM = 0.95  # momentum for rmsprop
 MIN_GRAD = 0.01  # small value for rmsprop
-LOAD_NETWORK = False
+LOAD_NETWORK = True
 SAVER_PATH = './saved_networks'
+SUMMARY_PATH = './summary'
 
 # Network parameters
 CONV1_NUM_FILTERS = 32
@@ -41,14 +42,6 @@ CONV3_NUM_FILTERS = 64
 CONV3_FILTER_SIZE = 3
 CONV3_STRIDE = 1
 FC_NUM_UNITS = 512
-
-# values for learning rate decay
-"""
-initial_learning_rate = 0.0025
-final_learning_rate = 0.00025
-learning_rate_decay_step = 50000
-learning_rate_decay_rate = 0.96
-"""
 
 
 class Agent():
@@ -85,8 +78,10 @@ class Agent():
         # training operation
         self.build_training_op()
 
+        self.summary_op = tf.merge_all_summaries()
         self.saver = tf.train.Saver()
         self.sess = tf.InteractiveSession()
+        self.summary_writer = tf.train.SummaryWriter(SUMMARY_PATH, self.sess.graph)
         self.sess.run(tf.initialize_all_variables())
 
         if not os.path.exists(SAVER_PATH):
@@ -128,9 +123,6 @@ class Agent():
 
         return s, w_conv1, b_conv1, w_conv2, b_conv2, w_conv3, b_conv3, w_fc, b_fc, w_q, b_q, q
 
-    def update_target_q_network(self):
-        self.sess.run(self.update_op)
-
     def build_training_op(self):
         self.a = tf.placeholder(tf.int64, [None])
         self.target = tf.placeholder(tf.float32, [None])
@@ -145,20 +137,12 @@ class Agent():
         clipped_error = tf.clip_by_value(error, -1, 1)
         self.loss = tf.reduce_mean(tf.square(clipped_error))
 
-        """
+        tf.scalar_summary('loss', self.loss)
+
         global_step = tf.Variable(0, trainable=False)
-        learning_rate = tf.maximum(self.final_learning_rate,
-                            tf.train.exponential_decay(
-                                self.initial_learning_rate,
-                                global_step,
-                                self.learning_rate_decay_step,
-                                self.learning_rate_decay_rate,
-                                staircase=True
-                            ))
-        """
 
         self.train_step = tf.train.RMSPropOptimizer(LEARNING_RATE,
-                            momentum=MOMENTUM, epsilon=MIN_GRAD).minimize(self.loss)
+            momentum=MOMENTUM, epsilon=MIN_GRAD).minimize(self.loss, global_step=global_step)
 
     def set_initial_input(self, frame):
         frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
@@ -171,6 +155,7 @@ class Agent():
             else:
                 self.action = np.argmax(self.q.eval(feed_dict={self.s: [self.state]})[0])
 
+        # epsilon decay
         if self.epsilon > FINAL_EPSILON and self.time_step > REPLAY_START_SIZE:
             self.epsilon -= self.epsilon_decay
 
@@ -203,16 +188,12 @@ class Agent():
                 mode = 'train'
             print 'TIMESTEP: {0} / STATE: {1} / EPSILON: {2}'.format(
                 self.time_step, mode, self.epsilon)
-
-        # if self.time_step > REPLAY_START_SIZE and self.time_step % 1000 == 0:
-            # print 'LOSS: {0} / Q_VALUE: {1}'.format(self.loss, self.q.mean())
         # *********************************
         # *********************************
 
         # save network
         if self.time_step % 10000 == 0:
-            self.saver.save(self.sess,
-                    SAVER_PATH + '/network' + '-dqn', global_step=self.time_step)
+            self.saver.save(self.sess, SAVER_PATH + '/network', global_step=self.time_step)
 
         self.state = next_state
         self.time_step += 1
@@ -240,10 +221,23 @@ class Agent():
         target_batch = reward_batch + (1 - done_batch) * GAMMA * np.max(q_batch)
 
         self.train_step.run(feed_dict={
-            self.target: target_batch,
+            self.s: state_batch,
             self.a: action_batch,
-            self.s: state_batch
+            self.target: target_batch
         })
+
+        if self.time_step % 100 == 0:
+            summary_str, loss = self.sess.run([self.summary_op, self.loss], feed_dict={
+                self.s: state_batch,
+                self.a: action_batch,
+                self.target: target_batch
+            })
+            print('TIMESTEP: {0} / LOSS: {1}'.format(self.time_step, loss))
+            self.summary_writer.add_summary(summary_str, self.time_step)
+            self.summary_writer.flush()
+
+    def update_target_q_network(self):
+        self.sess.run(self.update_op)
 
     def load_network(self):
         checkpoint = tf.train.get_checkpoint_state(SAVER_PATH)
