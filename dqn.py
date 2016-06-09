@@ -1,12 +1,13 @@
 # coding:utf-8
 
 import os
-import cv2
 import gym
 import random
 import numpy as np
 import tensorflow as tf
 from collections import deque
+from skimage.transform import resize
+from skimage.color import rgb2gray
 
 
 # Environment/Agent parameters
@@ -56,13 +57,13 @@ class Agent():
 
         # q network
         self.s, self.w_conv1, self.b_conv1, self.w_conv2, self.b_conv2, \
-            self.w_conv3, self.b_conv3, self.w_fc, self.b_fc, self.w_q, self.b_q, \
-            self.q = self.build_network()
+        self.w_conv3, self.b_conv3, self.w_fc, self.b_fc, self.w_q, self.b_q, \
+        self.q = self.build_network()
 
         # target q network
         self.st, self.w_conv1t, self.b_conv1t, self.w_conv2t, self.b_conv2t, \
-            self.w_conv3t, self.b_conv3t, self.w_fct, self.b_fct, self.w_qt, self.b_qt, \
-            self.qt = self.build_network()
+        self.w_conv3t, self.b_conv3t, self.w_fct, self.b_fct, self.w_qt, self.b_qt, \
+        self.qt = self.build_network()
 
         # update operation for target q network
         self.update_op = [self.w_conv1t.assign(self.w_conv1),
@@ -146,7 +147,7 @@ class Agent():
             momentum=MOMENTUM, epsilon=MIN_GRAD).minimize(self.loss, global_step=global_step)
 
     def set_initial_input(self, frame):
-        frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
+        frame = resize(rgb2gray(frame), (FRAME_SIZE, FRAME_SIZE))
         self.state = np.stack((frame, frame, frame, frame), axis=2)
 
     def get_action(self):
@@ -266,7 +267,7 @@ class Agent():
 
 
 def preprocess(frame):
-    frame = cv2.cvtColor(cv2.resize(frame, (FRAME_SIZE, FRAME_SIZE)) / 255, cv2.COLOR_BGR2GRAY)
+    frame = resize(rgb2gray(frame), (FRAME_SIZE, FRAME_SIZE))
     return np.reshape(frame, (FRAME_SIZE, FRAME_SIZE, 1))
 
 
