@@ -1,10 +1,27 @@
-# DQN-TensorFlow
-This is an implementation of DQN in TensorFlow using OpenAI Gym.
+# DQN in Keras + TensorFlow + OpenAI Gym
+This is an implementation of DQN in Keras + TensorFlow + OpenAI Gym.
+
+# Results
+Coming soon...
 
 ## Requirements
-* gym
-* opencv
-* tensorflow
+- gym
+- scikit-image
+- keras
+- tensorflow
 
-## References
-* [Human-level control through deep reinforcement learning](http://www.nature.com/nature/journal/v518/n7540/full/nature14236.html)
+## Usage
+### Training
+Just run:
+```
+python dqn.py
+```
+
+### Visualizing learning with TensorBoard
+Run the following:
+```
+tensorboard --logdir=summary/[filename]
+```
+
+## Reference
+- [Human-level control through deep reinforcement learning](http://www.nature.com/nature/journal/v518/n7540/full/nature14236.html)
