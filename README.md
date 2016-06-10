@@ -1,7 +1,7 @@
 # DQN in Keras + TensorFlow + OpenAI Gym
 This is an implementation of DQN in Keras + TensorFlow + OpenAI Gym.
 
-# Results
+## Results
 Coming soon...
 
 ## Requirements
@@ -11,13 +11,13 @@ Coming soon...
 - tensorflow
 
 ## Usage
-### Training
+#### Training
 Just run:
 ```
 python dqn.py
 ```
 
-### Visualizing learning with TensorBoard
+#### Visualizing learning with TensorBoard
 Run the following:
 ```
 tensorboard --logdir=summary/[filename]
