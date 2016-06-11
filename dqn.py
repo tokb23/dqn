@@ -20,20 +20,20 @@ FRAME_HEIGHT = 84  # resized frame height
 NUM_EPISODES = 10000  # number of episodes
 STATE_LENGTH = 4  # number of most recent frames as input
 GAMMA = 0.99  # discount factor
-EXPLORATION_STEPS = 5000  # number of steps over which epsilon decays
-REPLAY_START_SIZE = 1000  # number of steps before training starts
+EXPLORATION_STEPS = 500000  # number of steps over which epsilon decays
+REPLAY_START_SIZE = 30000  # number of steps before training starts
 FINAL_EPSILON = 0.1  # final value of epsilon in epsilon-greedy
 INITIAL_EPSILON = 1.0  # initial value of epsilon in epsilon-greedy
-NUM_REPLAY_MEMORY = 10000  # replay memory size
+NUM_REPLAY_MEMORY = 60000  # replay memory size
 BATCH_SIZE = 32  # mini batch size
-UPDATE_FREQ = 1000  # update frequency for target network
+UPDATE_FREQ = 5000  # update frequency for target network
 ACTION_FREQ = 4  # action frequency
 TRAIN_FREQ = 4  # training frequency
 LEARNING_RATE = 0.00025  # learning rate
 MOMENTUM = 0.95  # momentum for rmsprop
 MIN_GRAD = 0.01  # small value for rmsprop
 LOAD_NETWORK = False
-SAVE_FREQ = 100000
+SAVE_FREQ = 50000
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
 
@@ -74,18 +74,18 @@ class Agent():
         self.a, self.y, self.loss, self.grad_update = self.build_training_op(network_params)
 
         self.sess = tf.InteractiveSession()
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(network_params)
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summaries()
         self.summary_writer = tf.train.SummaryWriter(SAVE_SUMMARY_PATH, self.sess.graph)
 
         if not os.path.exists(SAVE_NETWORK_PATH):
             os.mkdir(SAVE_NETWORK_PATH)
 
+        self.sess.run(tf.initialize_all_variables())
+
         # Load network
         if LOAD_NETWORK:
             self.load_network()
-        else:
-            self.sess.run(tf.initialize_all_variables())
 
         # Initialize target network
         self.sess.run(self.update_target_network_params)
@@ -161,7 +161,8 @@ class Agent():
 
         # Save network
         if self.time_step % SAVE_FREQ == 0:
-            self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=self.time_step)
+            save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=self.time_step)
+            print 'Successfully saved: ', save_path
 
         self.total_reward += np.sign(reward)
         self.total_max_q += np.max(self.q_values.eval(feed_dict={self.s: [state]}))
@@ -260,9 +261,9 @@ class Agent():
         checkpoint = tf.train.get_checkpoint_state(SAVE_NETWORK_PATH)
         if checkpoint and checkpoint.model_checkpoint_path:
             self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
-            print 'Successfully loaded: {0}'.format(checkpoint.model_checkpoint_path)
+            print 'Successfully loaded: ', checkpoint.model_checkpoint_path
         else:
-            print 'Training new network'
+            print 'Training new network...'
 
 
 def preprocess(observation):
