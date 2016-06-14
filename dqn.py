@@ -20,22 +20,23 @@ FRAME_HEIGHT = 84  # resized frame height
 NUM_EPISODES = 10000  # number of episodes
 STATE_LENGTH = 4  # number of most recent frames as input
 GAMMA = 0.99  # discount factor
-EXPLORATION_STEPS = 500000  # number of steps over which epsilon decays
-REPLAY_START_SIZE = 30000  # number of steps before training starts
+EXPLORATION_STEPS = 1000000  # number of steps over which epsilon decays
+REPLAY_START_SIZE = 10000  # number of steps before training starts
 FINAL_EPSILON = 0.1  # final value of epsilon in epsilon-greedy
 INITIAL_EPSILON = 1.0  # initial value of epsilon in epsilon-greedy
 NUM_REPLAY_MEMORY = 60000  # replay memory size
 BATCH_SIZE = 32  # mini batch size
-UPDATE_FREQ = 5000  # update frequency for target network
+UPDATE_FREQ = 10000  # update frequency for target network
 ACTION_FREQ = 4  # action frequency
 TRAIN_FREQ = 4  # training frequency
 LEARNING_RATE = 0.00025  # learning rate
 MOMENTUM = 0.95  # momentum for rmsprop
 MIN_GRAD = 0.01  # small value for rmsprop
 LOAD_NETWORK = False
-SAVE_FREQ = 50000
+SAVE_FREQ = 1000000
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
+TRAIN = True
 
 
 class Agent():
@@ -68,7 +69,7 @@ class Agent():
 
         # Op for periodically updating target network
         self.update_target_network_params = [target_network_params[i].assign(network_params[i])
-            for i in range(len(target_network_params))]
+            for i in xrange(len(target_network_params))]
 
         # Define loss and gradient update op
         self.a, self.y, self.loss, self.grad_update = self.build_training_op(network_params)
@@ -123,8 +124,11 @@ class Agent():
         return a, y, loss, grad_update
 
     def get_initial_state(self, observation):
+        state = []
         observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
-        return np.stack((observation, observation, observation, observation), axis=0)
+        state = [observation for _ in xrange(STATE_LENGTH)]
+        state = np.stack(state, axis=0)
+        return state
 
     def get_action(self, state):
         action = self.repeat_action
@@ -174,7 +178,7 @@ class Agent():
                         self.total_max_q / float(self.episode_time),
                         self.episode_time,
                         self.total_loss / (float(self.episode_time) / float(TRAIN_FREQ))]
-                for i in range(len(stats)):
+                for i in xrange(len(stats)):
                     self.sess.run(self.update_ops[i], feed_dict={
                         self.summary_placeholders[i]: float(stats[i])
                     })
@@ -251,9 +255,9 @@ class Agent():
         tf.scalar_summary('Episode/Average Loss', episode_avg_loss)
         summary_vars = [episode_total_reward, episode_avg_max_q,
                         episode_duration, episode_avg_loss]
-        summary_placeholders = [tf.placeholder(tf.float32) for i in range(len(summary_vars))]
+        summary_placeholders = [tf.placeholder(tf.float32) for i in xrange(len(summary_vars))]
         update_ops = [summary_vars[i].assign(summary_placeholders[i])
-            for i in range(len(summary_vars))]
+            for i in xrange(len(summary_vars))]
         summary_op = tf.merge_all_summaries()
         return summary_placeholders, update_ops, summary_op
 
@@ -265,6 +269,14 @@ class Agent():
         else:
             print 'Training new network...'
 
+    def get_action_play(self, state):
+        if random.random() <= 0.05:
+            action = random.randrange(self.num_actions)
+        else:
+            action = np.argmax(self.q_values.eval(feed_dict={self.s: [state]}))
+
+        return action
+
 
 def preprocess(observation):
     observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
@@ -275,16 +287,28 @@ def main():
     env = gym.make(ENV_NAME)
     agent = Agent(num_actions=env.action_space.n)
 
-    for eposode in range(NUM_EPISODES):
-        terminal = False
-        observation = env.reset()
-        state = agent.get_initial_state(observation)
-        while not terminal:
-            env.render()
-            action = agent.get_action(state)
-            observation, reward, terminal, _ = env.step(action)
-            observation = preprocess(observation)
-            state = agent.run(state, action, reward, terminal, observation)
+    if TRAIN:
+        for eposode in xrange(NUM_EPISODES):
+            terminal = False
+            observation = env.reset()
+            state = agent.get_initial_state(observation)
+            while not terminal:
+                # env.render()
+                action = agent.get_action(state)
+                observation, reward, terminal, _ = env.step(action)
+                observation = preprocess(observation)
+                state = agent.run(state, action, reward, terminal, observation)
+    else:
+        for episode in xrange(10):
+            terminal = False
+            observation = env.reset()
+            state = agent.get_initial_state(observation)
+            while not terminal:
+                env.render()
+                action = agent.get_action_play(state)
+                observation, reward, terminal, _ = env.step(action)
+                observation = preprocess(observation)
+                state = np.append(observation, state[1:, :, :], axis=0)
 
 
 if __name__ == '__main__':
