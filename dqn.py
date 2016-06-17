@@ -18,13 +18,13 @@ ENV_NAME = 'Breakout-v0'  # environment
 FRAME_WIDTH = 84  # resized frame width
 FRAME_HEIGHT = 84  # resized frame height
 NUM_EPISODES = 10000  # number of episodes
-STATE_LENGTH = 4  # number of most recent frames as input
+STATE_LENGTH = 3  # number of most recent frames as input
 GAMMA = 0.99  # discount factor
 EXPLORATION_STEPS = 1000000  # number of steps over which epsilon decays
 REPLAY_START_SIZE = 10000  # number of steps before training starts
 FINAL_EPSILON = 0.1  # final value of epsilon in epsilon-greedy
 INITIAL_EPSILON = 1.0  # initial value of epsilon in epsilon-greedy
-NUM_REPLAY_MEMORY = 60000  # replay memory size
+NUM_REPLAY_MEMORY = 200000  # replay memory size
 BATCH_SIZE = 32  # mini batch size
 UPDATE_FREQ = 10000  # update frequency for target network
 ACTION_FREQ = 4  # action frequency
@@ -33,7 +33,7 @@ LEARNING_RATE = 0.00025  # learning rate
 MOMENTUM = 0.95  # momentum for rmsprop
 MIN_GRAD = 0.01  # small value for rmsprop
 LOAD_NETWORK = False
-SAVE_FREQ = 1000000
+SAVE_FREQ = 500000
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
 TRAIN = True
@@ -50,9 +50,9 @@ class Agent():
         # For summaries
         self.total_reward = 0
         self.total_max_q = 0
+        self.total_loss = 0
         self.episode_time = 1
         self.episode_step = 1
-        self.total_loss = 0
 
         # Create replay memory
         self.D = deque()
@@ -124,11 +124,10 @@ class Agent():
         return a, y, loss, grad_update
 
     def get_initial_state(self, observation):
-        observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255
-        observation = np.uint8(observation)
+        observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
+        observation = np.uint8(observation * 255)
         state = [observation for _ in xrange(STATE_LENGTH)]
-        state = np.stack(state, axis=0)
-        return state
+        return np.stack(state, axis=0)
 
     def get_action(self, state):
         action = self.repeat_action
@@ -147,8 +146,10 @@ class Agent():
         return action
 
     def run(self, state, action, reward, terminal, observation):
-        next_state = np.append(observation, state[1:, :, :], axis=0)
+        next_state = np.append(state[1:, :, :], observation, axis=0)
 
+        # Clip all positive rewards at 1 and all negative rewards at -1,
+        # leaving 0 rewards unchanged
         reward = np.int8(np.sign(reward))
 
         # Store transition in replay memory
@@ -227,10 +228,6 @@ class Agent():
             next_state_batch.append(data[3])
             terminal_batch.append(data[4])
 
-        # Clip all positive rewards at 1 and all negative rewards at -1,
-        # leaving 0 rewards unchanged
-        # reward_batch = np.sign(reward_batch)
-
         # Convert True to 1, False to 0
         terminal_batch = np.array(terminal_batch) + 0
 
@@ -280,9 +277,11 @@ class Agent():
         return action
 
 
-def preprocess(observation):
-    observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255
-    observation = np.uint8(observation)
+def preprocess(observation, last_observation):
+    if last_observation is not None:
+        observation = np.maximum(observation, last_observation)
+    observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
+    observation = np.uint8(observation * 255)
     return np.reshape(observation, (1, FRAME_WIDTH, FRAME_HEIGHT))
 
 
@@ -293,25 +292,29 @@ def main():
     if TRAIN:
         for eposode in xrange(NUM_EPISODES):
             terminal = False
+            last_observation = None
             observation = env.reset()
             state = agent.get_initial_state(observation)
             while not terminal:
                 # env.render()
                 action = agent.get_action(state)
                 observation, reward, terminal, _ = env.step(action)
-                observation = preprocess(observation)
-                state = agent.run(state, action, reward, terminal, observation)
+                processed_observation = preprocess(observation, last_observation)
+                state = agent.run(state, action, reward, terminal, processed_observation)
+                last_observation = observation
     else:
         for episode in xrange(10):
             terminal = False
+            last_observation = None
             observation = env.reset()
             state = agent.get_initial_state(observation)
             while not terminal:
                 env.render()
                 action = agent.get_action_play(state)
                 observation, reward, terminal, _ = env.step(action)
-                observation = preprocess(observation)
-                state = np.append(observation, state[1:, :, :], axis=0)
+                processed_observation = preprocess(observation, last_observation)
+                state = np.append(state[1:, :, :], processed_observation, axis=0)
+                last_observation = observation
 
 
 if __name__ == '__main__':
