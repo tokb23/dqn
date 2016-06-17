@@ -124,8 +124,8 @@ class Agent():
         return a, y, loss, grad_update
 
     def get_initial_state(self, observation):
-        state = []
-        observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
+        observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255
+        observation = np.uint8(observation)
         state = [observation for _ in xrange(STATE_LENGTH)]
         state = np.stack(state, axis=0)
         return state
@@ -148,6 +148,8 @@ class Agent():
 
     def run(self, state, action, reward, terminal, observation):
         next_state = np.append(observation, state[1:, :, :], axis=0)
+
+        reward = np.int8(np.sign(reward))
 
         # Store transition in replay memory
         self.D.append((state, action, reward, next_state, terminal))
@@ -227,7 +229,7 @@ class Agent():
 
         # Clip all positive rewards at 1 and all negative rewards at -1,
         # leaving 0 rewards unchanged
-        reward_batch = np.sign(reward_batch)
+        # reward_batch = np.sign(reward_batch)
 
         # Convert True to 1, False to 0
         terminal_batch = np.array(terminal_batch) + 0
@@ -279,7 +281,8 @@ class Agent():
 
 
 def preprocess(observation):
-    observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
+    observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255
+    observation = np.uint8(observation)
     return np.reshape(observation, (1, FRAME_WIDTH, FRAME_HEIGHT))
 
 
