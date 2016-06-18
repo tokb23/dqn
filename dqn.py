@@ -37,6 +37,7 @@ SAVE_FREQ = 500000
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
 TRAIN = True
+DOUBLE_DQN = True
 
 
 class Agent():
@@ -231,9 +232,14 @@ class Agent():
         # Convert True to 1, False to 0
         terminal_batch = np.array(terminal_batch) + 0
 
-        target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: next_state_batch})
-
-        y_batch = reward_batch + (1 - terminal_batch) * GAMMA * np.max(target_q_values_batch)
+        if DOUBLE_DQN:  # Double DQN
+            next_action_batch = np.argmax(self.q_values.eval(feed_dict={self.s: next_state_batch}), axis=1)
+            target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: next_state_batch})
+            for i in xrange(len(minibatch)):
+                y_batch.append(reward_batch[i] + (1 - terminal_batch[i]) * GAMMA * target_q_values_batch[i][next_action_batch[i]])
+        else:  # DQN
+            target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: next_state_batch})
+            y_batch = reward_batch + (1 - terminal_batch) * GAMMA * np.max(target_q_values_batch, axis=1)
 
         loss, _ = self.sess.run([self.loss, self.grad_update], feed_dict={
             self.s: state_batch,
