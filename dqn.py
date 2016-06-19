@@ -18,13 +18,13 @@ ENV_NAME = 'Breakout-v0'  # environment
 FRAME_WIDTH = 84  # resized frame width
 FRAME_HEIGHT = 84  # resized frame height
 NUM_EPISODES = 10000  # number of episodes
-STATE_LENGTH = 3  # number of most recent frames as input
+STATE_LENGTH = 4  # number of most recent frames as input
 GAMMA = 0.99  # discount factor
 EXPLORATION_STEPS = 1000000  # number of steps over which epsilon decays
-REPLAY_START_SIZE = 10000  # number of steps before training starts
+REPLAY_START_SIZE = 5000  # number of steps before training starts
 FINAL_EPSILON = 0.1  # final value of epsilon in epsilon-greedy
 INITIAL_EPSILON = 1.0  # initial value of epsilon in epsilon-greedy
-NUM_REPLAY_MEMORY = 200000  # replay memory size
+NUM_REPLAY_MEMORY = 100000  # replay memory size
 BATCH_SIZE = 32  # mini batch size
 UPDATE_FREQ = 10000  # update frequency for target network
 ACTION_FREQ = 4  # action frequency
@@ -37,7 +37,7 @@ SAVE_FREQ = 500000
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
 TRAIN = True
-DOUBLE_DQN = True
+DOUBLE_DQN = False
 
 
 class Agent():
@@ -126,7 +126,7 @@ class Agent():
 
     def get_initial_state(self, observation):
         observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
-        observation = np.uint8(observation * 255)
+        observation = np.float32(observation)
         state = [observation for _ in xrange(STATE_LENGTH)]
         return np.stack(state, axis=0)
 
@@ -287,7 +287,7 @@ def preprocess(observation, last_observation):
     if last_observation is not None:
         observation = np.maximum(observation, last_observation)
     observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
-    observation = np.uint8(observation * 255)
+    observation = np.float32(observation)
     return np.reshape(observation, (1, FRAME_WIDTH, FRAME_HEIGHT))
 
 
