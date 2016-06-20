@@ -14,30 +14,29 @@ from keras.layers import Convolution2D, Flatten, Dense, Input
 os.environ['KERAS_BACKEND'] = 'tensorflow'
 
 # Environment/Agent parameters
-ENV_NAME = 'Breakout-v0'  # environment
-FRAME_WIDTH = 84  # resized frame width
-FRAME_HEIGHT = 84  # resized frame height
-NUM_EPISODES = 10000  # number of episodes
-STATE_LENGTH = 4  # number of most recent frames as input
-GAMMA = 0.99  # discount factor
-EXPLORATION_STEPS = 1000000  # number of steps over which epsilon decays
-REPLAY_START_SIZE = 5000  # number of steps before training starts
-FINAL_EPSILON = 0.1  # final value of epsilon in epsilon-greedy
-INITIAL_EPSILON = 1.0  # initial value of epsilon in epsilon-greedy
-NUM_REPLAY_MEMORY = 100000  # replay memory size
-BATCH_SIZE = 32  # mini batch size
-UPDATE_FREQ = 10000  # update frequency for target network
-ACTION_FREQ = 4  # action frequency
-TRAIN_FREQ = 4  # training frequency
-LEARNING_RATE = 0.00025  # learning rate
-MOMENTUM = 0.95  # momentum for rmsprop
-MIN_GRAD = 0.01  # small value for rmsprop
+ENV_NAME = 'Breakout-v0'  # Environment name
+FRAME_WIDTH = 84  # Resized frame width
+FRAME_HEIGHT = 84  # Resized frame height
+NUM_EPISODES = 10000  # Number of episodes
+STATE_LENGTH = 4  # Number of most recent frames as input
+GAMMA = 0.99  # Discount factor
+EXPLORATION_STEPS = 1000000  # Number of steps over which epsilon decays
+INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
+FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
+REPLAY_START_SIZE = 5000  # Number of steps before training starts
+NUM_REPLAY_MEMORY = 100000  # Replay memory size
+BATCH_SIZE = 32  # Mini batch size
+UPDATE_FREQ = 10000  # Update frequency for target network
+ACTION_FREQ = 4  # Action frequency
+TRAIN_FREQ = 4  # Training frequency
+LEARNING_RATE = 0.00025  # Learning rate
+MOMENTUM = 0.95  # Momentum
+MIN_GRAD = 0.01  # Small value for RMSprop
 LOAD_NETWORK = False
-SAVE_FREQ = 500000
+SAVE_FREQ = 500000  # Saving frequency
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
 TRAIN = True
-DOUBLE_DQN = False
 
 
 class Agent():
@@ -68,7 +67,7 @@ class Agent():
         target_network_params = target_q_network.trainable_weights
         self.target_q_values = target_q_network(self.st)
 
-        # Op for periodically updating target network
+        # Define op for periodically updating target network
         self.update_target_network_params = [target_network_params[i].assign(network_params[i])
             for i in xrange(len(target_network_params))]
 
@@ -111,7 +110,7 @@ class Agent():
         a = tf.placeholder(tf.int64, [None])
         y = tf.placeholder(tf.float32, [None])
 
-        # Convert to one hot vector
+        # Convert action to one hot vector
         a_one_hot = tf.one_hot(a, self.num_actions, 1.0, 0.0)
         action_q_values = tf.reduce_sum(tf.mul(self.q_values, a_one_hot), reduction_indices=1)
 
@@ -125,8 +124,7 @@ class Agent():
         return a, y, loss, grad_update
 
     def get_initial_state(self, observation):
-        observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
-        observation = np.float32(observation)
+        observation = np.float32(resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT)))
         state = [observation for _ in xrange(STATE_LENGTH)]
         return np.stack(state, axis=0)
 
@@ -149,8 +147,7 @@ class Agent():
     def run(self, state, action, reward, terminal, observation):
         next_state = np.append(state[1:, :, :], observation, axis=0)
 
-        # Clip all positive rewards at 1 and all negative rewards at -1,
-        # leaving 0 rewards unchanged
+        # Clip all positive rewards at 1 and all negative rewards at -1, leaving 0 rewards unchanged
         reward = np.int8(np.sign(reward))
 
         # Store transition in replay memory
@@ -232,14 +229,8 @@ class Agent():
         # Convert True to 1, False to 0
         terminal_batch = np.array(terminal_batch) + 0
 
-        if DOUBLE_DQN:  # Double DQN
-            next_action_batch = np.argmax(self.q_values.eval(feed_dict={self.s: next_state_batch}), axis=1)
-            target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: next_state_batch})
-            for i in xrange(len(minibatch)):
-                y_batch.append(reward_batch[i] + (1 - terminal_batch[i]) * GAMMA * target_q_values_batch[i][next_action_batch[i]])
-        else:  # DQN
-            target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: next_state_batch})
-            y_batch = reward_batch + (1 - terminal_batch) * GAMMA * np.max(target_q_values_batch, axis=1)
+        target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: next_state_batch})
+        y_batch = reward_batch + (1 - terminal_batch) * GAMMA * np.max(target_q_values_batch, axis=1)
 
         loss, _ = self.sess.run([self.loss, self.grad_update], feed_dict={
             self.s: state_batch,
@@ -286,8 +277,7 @@ class Agent():
 def preprocess(observation, last_observation):
     if last_observation is not None:
         observation = np.maximum(observation, last_observation)
-    observation = resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT))
-    observation = np.float32(observation)
+    observation = np.float32(resize(rgb2gray(observation), (FRAME_WIDTH, FRAME_HEIGHT)))
     return np.reshape(observation, (1, FRAME_WIDTH, FRAME_HEIGHT))
 
 
@@ -295,7 +285,7 @@ def main():
     env = gym.make(ENV_NAME)
     agent = Agent(num_actions=env.action_space.n)
 
-    if TRAIN:
+    if TRAIN:  # Train mode
         for eposode in xrange(NUM_EPISODES):
             terminal = False
             last_observation = None
@@ -308,8 +298,9 @@ def main():
                 processed_observation = preprocess(observation, last_observation)
                 state = agent.run(state, action, reward, terminal, processed_observation)
                 last_observation = observation
-    else:
-        for episode in xrange(10):
+    else:  # Test mode
+        # env.monitor.start('Breakout-v0-experiment-1')
+        for episode in xrange(3):
             terminal = False
             last_observation = None
             observation = env.reset()
@@ -321,6 +312,7 @@ def main():
                 processed_observation = preprocess(observation, last_observation)
                 state = np.append(state[1:, :, :], processed_observation, axis=0)
                 last_observation = observation
+        # env.monitor.close()
 
 
 if __name__ == '__main__':
