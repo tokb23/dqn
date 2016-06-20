@@ -9,9 +9,11 @@ This is an implementation of DQN in Keras + TensorFlow + OpenAI Gym.
 
 ## Results
 This is the result of training of DQN for about 20 hours(10000 episodes/4.35 millions frame) on AWS EC2 g2.2xlarge instance.  
+<br>
 ![result](assets/result.gif)
 <br>
-Statistics of average loss, average max q values, total reward and duration / episode.  
+Statistics of average loss, average max q values, duration and total reward / episode.  
+<br>
 ![result](assets/result.png)
 
 ## Usage
