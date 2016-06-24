@@ -13,45 +13,44 @@ from keras.layers import Convolution2D, Flatten, Dense, Input
 
 os.environ['KERAS_BACKEND'] = 'tensorflow'
 
-# Environment/Agent parameters
 ENV_NAME = 'Breakout-v0'  # Environment name
 FRAME_WIDTH = 84  # Resized frame width
 FRAME_HEIGHT = 84  # Resized frame height
-NUM_EPISODES = 10000  # Number of episodes
-STATE_LENGTH = 4  # Number of most recent frames as input
+NUM_EPISODES = 10000  # Number of episodes we play
+STATE_LENGTH = 4  # Number of most recent frames to produce the input to the network
 GAMMA = 0.99  # Discount factor
-EXPLORATION_STEPS = 1000000  # Number of steps over which epsilon decays
+EXPLORATION_STEPS = 1000000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
 INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
-REPLAY_START_SIZE = 5000  # Number of steps before training starts
-NUM_REPLAY_MEMORY = 100000  # Replay memory size
+INITIAL_REPLAY_SIZE = 5000  # Number of steps to populate the replay memory before training starts
+NUM_REPLAY_MEMORY = 100000  # Number of replay memory we use for training
 BATCH_SIZE = 32  # Mini batch size
-UPDATE_FREQ = 10000  # Update frequency for target network
-ACTION_FREQ = 4  # Action frequency
-TRAIN_FREQ = 4  # Training frequency
-LEARNING_RATE = 0.00025  # Learning rate
-MOMENTUM = 0.95  # Momentum
-MIN_GRAD = 0.01  # Small value for RMSprop
+TARGET_UPDATE_FREQ = 10000  # The frequency with which the target network is updated
+ACTION_FREQ = 4  # The agent sees only every 4th input
+TRAIN_FREQ = 4  # The agent selects 4 actions between successive updates
+LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
+MOMENTUM = 0.95  # Momentum used by RMSProp
+MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
+SAVE_FREQ = 300000  # The frequency with which the network is saved
 LOAD_NETWORK = False
-SAVE_FREQ = 500000  # Saving frequency
+TRAIN = True
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
-TRAIN = True
 
 
 class Agent():
     def __init__(self, num_actions):
         self.num_actions = num_actions
         self.epsilon = INITIAL_EPSILON
-        self.epsilon_decay = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
+        self.epsilon_step = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
         self.time_step = 1
         self.repeat_action = 0
 
-        # For summaries
+        # Parameters used for summaries
         self.total_reward = 0
         self.total_max_q = 0
         self.total_loss = 0
-        self.episode_time = 1
+        self.duration = 1
         self.episode_step = 1
 
         # Create replay memory
@@ -67,11 +66,11 @@ class Agent():
         target_network_params = target_q_network.trainable_weights
         self.target_q_values = target_q_network(self.st)
 
-        # Define op for periodically updating target network
+        # Define operation to periodically update target network
         self.update_target_network_params = [target_network_params[i].assign(network_params[i])
             for i in xrange(len(target_network_params))]
 
-        # Define loss and gradient update op
+        # Define loss and gradient update operation
         self.a, self.y, self.loss, self.grad_update = self.build_training_op(network_params)
 
         self.sess = tf.InteractiveSession()
@@ -112,10 +111,10 @@ class Agent():
 
         # Convert action to one hot vector
         a_one_hot = tf.one_hot(a, self.num_actions, 1.0, 0.0)
-        action_q_values = tf.reduce_sum(tf.mul(self.q_values, a_one_hot), reduction_indices=1)
+        q_value = tf.reduce_sum(tf.mul(self.q_values, a_one_hot), reduction_indices=1)
 
         # Clip the error term to be between -1 and 1
-        error = y - action_q_values
+        error = y - q_value
         clipped_error = tf.clip_by_value(error, -1, 1)
         loss = tf.reduce_mean(tf.square(clipped_error))
 
@@ -132,15 +131,15 @@ class Agent():
         action = self.repeat_action
 
         if self.time_step % ACTION_FREQ == 0:
-            if random.random() <= self.epsilon or self.time_step <= REPLAY_START_SIZE:
+            if random.random() <= self.epsilon or self.time_step <= INITIAL_REPLAY_SIZE:
                 action = random.randrange(self.num_actions)
             else:
                 action = np.argmax(self.q_values.eval(feed_dict={self.s: [state]}))
             self.repeat_action = action
 
-        # Epsilon decay
-        if self.epsilon > FINAL_EPSILON and self.time_step > REPLAY_START_SIZE:
-            self.epsilon -= self.epsilon_decay
+        # Anneal epsilon linearly over time
+        if self.epsilon > FINAL_EPSILON and self.time_step > INITIAL_REPLAY_SIZE:
+            self.epsilon -= self.epsilon_step
 
         return action
 
@@ -156,12 +155,12 @@ class Agent():
             self.D.popleft()
 
         # Train network
-        if self.time_step > REPLAY_START_SIZE:
+        if self.time_step > INITIAL_REPLAY_SIZE:
             if self.time_step % TRAIN_FREQ == 0:
                 self.train_network()
 
         # Update target network
-        if self.time_step % UPDATE_FREQ == 0:
+        if self.time_step % TARGET_UPDATE_FREQ == 0:
             self.sess.run(self.update_target_network_params)
 
         # Save network
@@ -174,11 +173,11 @@ class Agent():
 
         if terminal:
             # Write summaries
-            if self.time_step > REPLAY_START_SIZE + TRAIN_FREQ:
+            if self.time_step > INITIAL_REPLAY_SIZE:
                 stats = [self.total_reward,
-                        self.total_max_q / float(self.episode_time),
-                        self.episode_time,
-                        self.total_loss / (float(self.episode_time) / float(TRAIN_FREQ))]
+                        self.total_max_q / float(self.duration),
+                        self.duration,
+                        self.total_loss / (float(self.duration) / float(TRAIN_FREQ))]
                 for i in xrange(len(stats)):
                     self.sess.run(self.update_ops[i], feed_dict={
                         self.summary_placeholders[i]: float(stats[i])
@@ -187,24 +186,24 @@ class Agent():
                 self.summary_writer.add_summary(summary_str, self.episode_step)
 
             # Debug
-            if self.time_step <= REPLAY_START_SIZE:
+            if self.time_step <= INITIAL_REPLAY_SIZE:
                 mode = 'random'
-            elif REPLAY_START_SIZE < self.time_step <= REPLAY_START_SIZE + EXPLORATION_STEPS:
+            elif INITIAL_REPLAY_SIZE < self.time_step <= INITIAL_REPLAY_SIZE + EXPLORATION_STEPS:
                 mode = 'explore'
             else:
                 mode = 'exploit'
             print 'EPISODE: {0:6d} / TIMESTEP: {1:8d} / DURATION: {2:5d} / EPSILON: {3:.5f} / TOTAL_REWARD: {4:3.0f} / AVG_MAX_Q: {5:2.4f} / AVG_LOSS: {6:.5f} / MODE: {7}'.format(
-                self.episode_step, self.time_step, self.episode_time, self.epsilon,
-                self.total_reward, self.total_max_q / float(self.episode_time),
-                self.total_loss / (float(self.episode_time) / float(TRAIN_FREQ)), mode)
+                self.episode_step, self.time_step, self.duration, self.epsilon,
+                self.total_reward, self.total_max_q / float(self.duration),
+                self.total_loss / (float(self.duration) / float(TRAIN_FREQ)), mode)
 
             self.total_reward = 0
             self.total_max_q = 0
             self.total_loss = 0
-            self.episode_time = 0
+            self.duration = 0
             self.episode_step += 1
 
-        self.episode_time += 1
+        self.duration += 1
         self.time_step += 1
 
         return next_state
@@ -242,13 +241,13 @@ class Agent():
 
     def setup_summaries(self):
         episode_total_reward = tf.Variable(0.)
-        tf.scalar_summary('Episode/Total Reward', episode_total_reward)
+        tf.scalar_summary('Total Reward/Episode', episode_total_reward)
         episode_avg_max_q = tf.Variable(0.)
-        tf.scalar_summary('Episode/Average Max Q Value', episode_avg_max_q)
+        tf.scalar_summary('Average Max Q Value/Episode', episode_avg_max_q)
         episode_duration = tf.Variable(0.)
-        tf.scalar_summary('Episode/Duration', episode_duration)
+        tf.scalar_summary('Duration/Episode', episode_duration)
         episode_avg_loss = tf.Variable(0.)
-        tf.scalar_summary('Episode/Average Loss', episode_avg_loss)
+        tf.scalar_summary('Average Loss/Episode', episode_avg_loss)
         summary_vars = [episode_total_reward, episode_avg_max_q,
                         episode_duration, episode_avg_loss]
         summary_placeholders = [tf.placeholder(tf.float32) for i in xrange(len(summary_vars))]
@@ -265,7 +264,7 @@ class Agent():
         else:
             print 'Training new network...'
 
-    def get_action_play(self, state):
+    def get_action_in_test(self, state):
         if random.random() <= 0.05:
             action = random.randrange(self.num_actions)
         else:
@@ -307,7 +306,7 @@ def main():
             state = agent.get_initial_state(observation)
             while not terminal:
                 env.render()
-                action = agent.get_action_play(state)
+                action = agent.get_action_in_test(state)
                 observation, reward, terminal, _ = env.step(action)
                 processed_observation = preprocess(observation, last_observation)
                 state = np.append(state[1:, :, :], processed_observation, axis=0)
