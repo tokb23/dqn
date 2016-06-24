@@ -22,8 +22,8 @@ GAMMA = 0.99  # Discount factor
 EXPLORATION_STEPS = 1000000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
 INITIAL_EPSILON = 1.0  # Initial value of epsilon in epsilon-greedy
 FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
-INITIAL_REPLAY_SIZE = 5000  # Number of steps to populate the replay memory before training starts
-NUM_REPLAY_MEMORY = 100000  # Number of replay memory the agent uses for training
+INITIAL_REPLAY_SIZE = 20000  # Number of steps to populate the replay memory before training starts
+NUM_REPLAY_MEMORY = 400000  # Number of replay memory the agent uses for training
 BATCH_SIZE = 32  # Mini batch size
 TARGET_UPDATE_FREQ = 10000  # The frequency with which the target network is updated
 ACTION_FREQ = 4  # The agent sees only every 4th input
@@ -37,6 +37,8 @@ LOAD_NETWORK = False
 TRAIN = True
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
+NUM_EPISODE_IN_TEST = 30  # Number of episodes the agent plays in test time
+ACTION_FREQ_IN_TEST = 6  # The agent sees only every 6th input in test time
 
 
 class Agent():
@@ -125,7 +127,7 @@ class Agent():
 
     def get_initial_state(self, observation, last_observation):
         processed_observation = np.maximum(observation, last_observation)
-        processed_observation = np.float32(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT)))
+        processed_observation = np.uint8(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255)
         state = [processed_observation for _ in xrange(STATE_LENGTH)]
         return np.stack(state, axis=0)
 
@@ -136,7 +138,7 @@ class Agent():
             if random.random() <= self.epsilon or self.time_step <= INITIAL_REPLAY_SIZE:
                 action = random.randrange(self.num_actions)
             else:
-                action = np.argmax(self.q_values.eval(feed_dict={self.s: [state]}))
+                action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
             self.repeat_action = action
 
         # Anneal epsilon linearly over time
@@ -149,29 +151,29 @@ class Agent():
         next_state = np.append(state[1:, :, :], observation, axis=0)
 
         # Clip all positive rewards at 1 and all negative rewards at -1, leaving 0 rewards unchanged
-        reward = np.int8(np.sign(reward))
+        reward = np.sign(reward)
 
         # Store transition in replay memory
         self.D.append((state, action, reward, next_state, terminal))
         if len(self.D) > NUM_REPLAY_MEMORY:
             self.D.popleft()
 
-        # Train network
         if self.time_step > INITIAL_REPLAY_SIZE:
+            # Train network
             if self.time_step % TRAIN_FREQ == 0:
                 self.train_network()
 
-        # Update target network
-        if self.time_step % TARGET_UPDATE_FREQ == 0:
-            self.sess.run(self.update_target_network_params)
+            # Update target network
+            if self.time_step % TARGET_UPDATE_FREQ == 0:
+                self.sess.run(self.update_target_network_params)
 
-        # Save network
-        if self.time_step % SAVE_FREQ == 0:
-            save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=self.time_step)
-            print 'Successfully saved: ', save_path
+            # Save network
+            if self.time_step % SAVE_FREQ == 0:
+                save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=self.time_step)
+                print 'Successfully saved: ', save_path
 
-        self.total_reward += np.sign(reward)
-        self.total_max_q += np.max(self.q_values.eval(feed_dict={self.s: [state]}))
+        self.total_reward += reward
+        self.total_max_q += np.max(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
 
         if terminal:
             # Write summaries
@@ -230,11 +232,11 @@ class Agent():
         # Convert True to 1, False to 0
         terminal_batch = np.array(terminal_batch) + 0
 
-        target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: next_state_batch})
+        target_q_values_batch = self.target_q_values.eval(feed_dict={self.st: np.float32(np.array(next_state_batch) / 255.0)})
         y_batch = reward_batch + (1 - terminal_batch) * GAMMA * np.max(target_q_values_batch, axis=1)
 
         loss, _ = self.sess.run([self.loss, self.grad_update], feed_dict={
-            self.s: state_batch,
+            self.s: np.float32(np.array(state_batch) / 255.0),
             self.a: action_batch,
             self.y: y_batch
         })
@@ -267,17 +269,23 @@ class Agent():
             print 'Training new network...'
 
     def get_action_in_test(self, state):
-        if random.random() <= 0.05:
-            action = random.randrange(self.num_actions)
-        else:
-            action = np.argmax(self.q_values.eval(feed_dict={self.s: [state]}))
+        action = self.repeat_action
+
+        if self.time_step % ACTION_FREQ_IN_TEST == 0:
+            if random.random() <= 0.05:
+                action = random.randrange(self.num_actions)
+            else:
+                action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
+            self.repeat_action = action
+
+        self.time_step += 1
 
         return action
 
 
 def preprocess(observation, last_observation):
     processed_observation = np.maximum(observation, last_observation)
-    processed_observation = np.float32(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT)))
+    processed_observation = np.uint8(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255)
     return np.reshape(processed_observation, (1, FRAME_WIDTH, FRAME_HEIGHT))
 
 
@@ -289,7 +297,7 @@ def main():
         for eposode in xrange(NUM_EPISODES):
             terminal = False
             observation = env.reset()
-            for _ in xrange(NO_OP_STEPS):
+            for _ in xrange(random.randint(1, NO_OP_STEPS)):
                 last_observation = observation
                 observation, _, _, _ = env.step(0)  # do nothing
             state = agent.get_initial_state(observation, last_observation)
@@ -297,15 +305,17 @@ def main():
                 last_observation = observation
                 action = agent.get_action(state)
                 observation, reward, terminal, _ = env.step(action)
-                env.render()
+                # env.render()
                 processed_observation = preprocess(observation, last_observation)
                 state = agent.run(state, action, reward, terminal, processed_observation)
     else:  # Test mode
         # env.monitor.start('Breakout-v0-experiment-1')
-        for episode in xrange(3):
+        for episode in xrange(NUM_EPISODE_IN_TEST):
             terminal = False
             last_observation = env.reset()
-            observation, _, _, _ = env.step(0)  # do nothing
+            for _ in xrange(random.randint(1, NO_OP_STEPS)):
+                last_observation = observation
+                observation, _, _, _ = env.step(0)  # do nothing
             state = agent.get_initial_state(observation, last_observation)
             while not terminal:
                 last_observation = observation
