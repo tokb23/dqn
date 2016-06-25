@@ -60,23 +60,22 @@ class Agent():
 
         # Create q network
         self.s, q_network = self.build_network()
-        network_params = q_network.trainable_weights
+        q_network_params = q_network.trainable_weights
         self.q_values = q_network(self.s)
 
         # Create target network
-        self.st, target_q_network = self.build_network()
-        target_network_params = target_q_network.trainable_weights
-        self.target_q_values = target_q_network(self.st)
+        self.st, target_network = self.build_network()
+        target_network_params = target_network.trainable_weights
+        self.target_q_values = target_network(self.st)
 
         # Define operation to periodically update target network
-        self.update_target_network_params = [target_network_params[i].assign(network_params[i])
-            for i in xrange(len(target_network_params))]
+        self.update_target_network_params = [target_network_params[i].assign(q_network_params[i]) for i in xrange(len(target_network_params))]
 
         # Define loss and gradient update operation
-        self.a, self.y, self.loss, self.grad_update = self.build_training_op(network_params)
+        self.a, self.y, self.loss, self.grad_update = self.build_training_op(q_network_params)
 
         self.sess = tf.InteractiveSession()
-        self.saver = tf.train.Saver(network_params)
+        self.saver = tf.train.Saver(q_network_params)
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summaries()
         self.summary_writer = tf.train.SummaryWriter(SAVE_SUMMARY_PATH, self.sess.graph)
 
@@ -94,20 +93,17 @@ class Agent():
 
     def build_network(self):
         s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
-        inputs = Input(shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT,))
-        model = Convolution2D(nb_filter=32, nb_row=8, nb_col=8, subsample=(4, 4),
-                            activation='relu', border_mode='valid')(inputs)
-        model = Convolution2D(nb_filter=64, nb_row=4, nb_col=4, subsample=(2, 2),
-                            activation='relu', border_mode='valid')(model)
-        model = Convolution2D(nb_filter=64, nb_row=3, nb_col=3, subsample=(1, 1),
-                            activation='relu', border_mode='valid')(model)
+        inputs = Input(shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT))
+        model = Convolution2D(32, 8, 8, subsample=(4, 4), activation='relu')(inputs)
+        model = Convolution2D(64, 4, 4, subsample=(2, 2), activation='relu')(model)
+        model = Convolution2D(64, 3, 3, subsample=(1, 1), activation='relu')(model)
         model = Flatten()(model)
-        model = Dense(output_dim=512, activation='relu')(model)
-        q_values = Dense(output_dim=self.num_actions, activation='linear')(model)
+        model = Dense(512, activation='relu')(model)
+        q_values = Dense(self.num_actions)(model)
         m = Model(input=inputs, output=q_values)
         return s, m
 
-    def build_training_op(self, network_params):
+    def build_training_op(self, q_network_params):
         a = tf.placeholder(tf.int64, [None])
         y = tf.placeholder(tf.float32, [None])
 
@@ -121,7 +117,8 @@ class Agent():
         loss = tf.reduce_mean(tf.square(clipped_error))
 
         optimizer = tf.train.RMSPropOptimizer(LEARNING_RATE, momentum=MOMENTUM, epsilon=MIN_GRAD)
-        grad_update = optimizer.minimize(loss, var_list=network_params)
+        grad_update = optimizer.minimize(loss, var_list=q_network_params)
+
         return a, y, loss, grad_update
 
     def get_initial_state(self, observation, last_observation):
@@ -178,10 +175,8 @@ class Agent():
         if terminal:
             # Write summaries
             if self.t >= INITIAL_REPLAY_SIZE:
-                stats = [self.total_reward,
-                        self.total_q_max / float(self.duration),
-                        self.duration,
-                        self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL))]
+                stats = [self.total_reward, self.total_q_max / float(self.duration),
+                        self.duration, self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL))]
                 for i in xrange(len(stats)):
                     self.sess.run(self.update_ops[i], feed_dict={
                         self.summary_placeholders[i]: float(stats[i])
@@ -253,11 +248,9 @@ class Agent():
         tf.scalar_summary('Duration/Episode', episode_duration)
         episode_avg_loss = tf.Variable(0.)
         tf.scalar_summary('Average Loss/Episode', episode_avg_loss)
-        summary_vars = [episode_total_reward, episode_avg_max_q,
-                        episode_duration, episode_avg_loss]
+        summary_vars = [episode_total_reward, episode_avg_max_q, episode_duration, episode_avg_loss]
         summary_placeholders = [tf.placeholder(tf.float32) for i in xrange(len(summary_vars))]
-        update_ops = [summary_vars[i].assign(summary_placeholders[i])
-            for i in xrange(len(summary_vars))]
+        update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in xrange(len(summary_vars))]
         summary_op = tf.merge_all_summaries()
         return summary_placeholders, update_ops, summary_op
 
