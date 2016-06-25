@@ -25,20 +25,19 @@ FINAL_EPSILON = 0.1  # Final value of epsilon in epsilon-greedy
 INITIAL_REPLAY_SIZE = 20000  # Number of steps to populate the replay memory before training starts
 NUM_REPLAY_MEMORY = 400000  # Number of replay memory the agent uses for training
 BATCH_SIZE = 32  # Mini batch size
-TARGET_UPDATE_FREQ = 10000  # The frequency with which the target network is updated
-ACTION_FREQ = 4  # The agent sees only every 4th input
-TRAIN_FREQ = 4  # The agent selects 4 actions between successive updates
+TARGET_UPDATE_INTERVAL = 10000  # The frequency with which the target network is updated
+ACTION_INTERVAL = 4  # The agent sees only every 4th input
+TRAIN_INTERVAL = 4  # The agent selects 4 actions between successive updates
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
-SAVE_FREQ = 300000  # The frequency with which the network is saved
-NO_OP_STEPS = 30  # Number of "do nothing" actions to be performed by the agent at the start of an episode
+SAVE_INTERVAL = 300000  # The frequency with which the network is saved
+NO_OP_STEPS = 30  # Maximum number of "do nothing" actions to be performed by the agent at the start of an episode
 LOAD_NETWORK = False
 TRAIN = True
 SAVE_NETWORK_PATH = './saved_networks'
 SAVE_SUMMARY_PATH = './summary'
 NUM_EPISODE_IN_TEST = 30  # Number of episodes the agent plays in test time
-ACTION_FREQ_IN_TEST = 6  # The agent sees only every 6th input in test time
 
 
 class Agent():
@@ -46,15 +45,15 @@ class Agent():
         self.num_actions = num_actions
         self.epsilon = INITIAL_EPSILON
         self.epsilon_step = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
-        self.time_step = 1
-        self.repeat_action = 0
+        self.t = 0
+        self.repeated_action = 0
 
         # Parameters used for summaries
         self.total_reward = 0
-        self.total_max_q = 0
+        self.total_q_max = 0
         self.total_loss = 0
-        self.duration = 1
-        self.episode_step = 1
+        self.duration = 0
+        self.episode = 0
 
         # Create replay memory
         self.D = deque()
@@ -132,17 +131,17 @@ class Agent():
         return np.stack(state, axis=0)
 
     def get_action(self, state):
-        action = self.repeat_action
+        action = self.repeated_action
 
-        if self.time_step % ACTION_FREQ == 0:
-            if random.random() <= self.epsilon or self.time_step <= INITIAL_REPLAY_SIZE:
+        if self.t % ACTION_INTERVAL == 0:
+            if random.random() <= self.epsilon or self.t < INITIAL_REPLAY_SIZE:
                 action = random.randrange(self.num_actions)
             else:
                 action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
-            self.repeat_action = action
+            self.repeated_action = action
 
         # Anneal epsilon linearly over time
-        if self.epsilon > FINAL_EPSILON and self.time_step > INITIAL_REPLAY_SIZE:
+        if self.epsilon > FINAL_EPSILON and self.t >= INITIAL_REPLAY_SIZE:
             self.epsilon -= self.epsilon_step
 
         return action
@@ -158,57 +157,57 @@ class Agent():
         if len(self.D) > NUM_REPLAY_MEMORY:
             self.D.popleft()
 
-        if self.time_step > INITIAL_REPLAY_SIZE:
+        if self.t >= INITIAL_REPLAY_SIZE:
             # Train network
-            if self.time_step % TRAIN_FREQ == 0:
+            if self.t % TRAIN_INTERVAL == 0:
                 self.train_network()
 
             # Update target network
-            if self.time_step % TARGET_UPDATE_FREQ == 0:
+            if self.t % TARGET_UPDATE_INTERVAL == 0:
                 self.sess.run(self.update_target_network_params)
 
             # Save network
-            if self.time_step % SAVE_FREQ == 0:
-                save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=self.time_step)
+            if self.t % SAVE_INTERVAL == 0:
+                save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=(self.t + 1))
                 print 'Successfully saved: ', save_path
 
         self.total_reward += reward
-        self.total_max_q += np.max(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
+        self.total_q_max += np.max(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
+        self.duration += 1
 
         if terminal:
             # Write summaries
-            if self.time_step > INITIAL_REPLAY_SIZE:
+            if self.t >= INITIAL_REPLAY_SIZE:
                 stats = [self.total_reward,
-                        self.total_max_q / float(self.duration),
+                        self.total_q_max / float(self.duration),
                         self.duration,
-                        self.total_loss / (float(self.duration) / float(TRAIN_FREQ))]
+                        self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL))]
                 for i in xrange(len(stats)):
                     self.sess.run(self.update_ops[i], feed_dict={
                         self.summary_placeholders[i]: float(stats[i])
                     })
                 summary_str = self.sess.run(self.summary_op)
-                self.summary_writer.add_summary(summary_str, self.episode_step)
+                self.summary_writer.add_summary(summary_str, self.episode + 1)
 
             # Debug
-            if self.time_step <= INITIAL_REPLAY_SIZE:
+            if self.t < INITIAL_REPLAY_SIZE:
                 mode = 'random'
-            elif INITIAL_REPLAY_SIZE < self.time_step <= INITIAL_REPLAY_SIZE + EXPLORATION_STEPS:
+            elif INITIAL_REPLAY_SIZE <= self.t < INITIAL_REPLAY_SIZE + EXPLORATION_STEPS:
                 mode = 'explore'
             else:
                 mode = 'exploit'
             print 'EPISODE: {0:6d} / TIMESTEP: {1:8d} / DURATION: {2:5d} / EPSILON: {3:.5f} / TOTAL_REWARD: {4:3.0f} / AVG_MAX_Q: {5:2.4f} / AVG_LOSS: {6:.5f} / MODE: {7}'.format(
-                self.episode_step, self.time_step, self.duration, self.epsilon,
-                self.total_reward, self.total_max_q / float(self.duration),
-                self.total_loss / (float(self.duration) / float(TRAIN_FREQ)), mode)
+                self.episode + 1, self.t + 1, self.duration, self.epsilon,
+                self.total_reward, self.total_q_max / float(self.duration),
+                self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL)), mode)
 
             self.total_reward = 0
-            self.total_max_q = 0
+            self.total_q_max = 0
             self.total_loss = 0
             self.duration = 0
-            self.episode_step += 1
+            self.episode += 1
 
-        self.duration += 1
-        self.time_step += 1
+        self.t += 1
 
         return next_state
 
@@ -269,16 +268,16 @@ class Agent():
             print 'Training new network...'
 
     def get_action_in_test(self, state):
-        action = self.repeat_action
+        action = self.repeated_action
 
-        if self.time_step % ACTION_FREQ_IN_TEST == 0:
+        if self.t % ACTION_INTERVAL == 0:
             if random.random() <= 0.05:
                 action = random.randrange(self.num_actions)
             else:
                 action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
-            self.repeat_action = action
+            self.repeated_action = action
 
-        self.time_step += 1
+        self.t += 1
 
         return action
 
