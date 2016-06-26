@@ -8,8 +8,8 @@ import tensorflow as tf
 from collections import deque
 from skimage.color import rgb2gray
 from skimage.transform import resize
-from keras.models import Model
-from keras.layers import Convolution2D, Flatten, Dense, Input
+from keras.models import Sequential
+from keras.layers import Convolution2D, Flatten, Dense
 
 os.environ['KERAS_BACKEND'] = 'tensorflow'
 
@@ -59,23 +59,21 @@ class Agent():
         self.D = deque()
 
         # Create q network
-        self.s, q_network = self.build_network()
-        q_network_params = q_network.trainable_weights
-        self.q_values = q_network(self.s)
+        self.s, self.q_values, q_network = self.build_network()
+        q_network_weights = q_network.trainable_weights
 
         # Create target network
-        self.st, target_network = self.build_network()
-        target_network_params = target_network.trainable_weights
-        self.target_q_values = target_network(self.st)
+        self.st, self.target_q_values, target_network = self.build_network()
+        target_network_weights = target_network.trainable_weights
 
         # Define operation to periodically update target network
-        self.update_target_network_params = [target_network_params[i].assign(q_network_params[i]) for i in xrange(len(target_network_params))]
+        self.update_target_network_params = [target_network_weights[i].assign(q_network_weights[i]) for i in xrange(len(target_network_weights))]
 
         # Define loss and gradient update operation
-        self.a, self.y, self.loss, self.grad_update = self.build_training_op(q_network_params)
+        self.a, self.y, self.loss, self.grad_update = self.build_training_op(q_network_weights)
 
         self.sess = tf.InteractiveSession()
-        self.saver = tf.train.Saver(q_network_params)
+        self.saver = tf.train.Saver(q_network_weights)
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summaries()
         self.summary_writer = tf.train.SummaryWriter(SAVE_SUMMARY_PATH, self.sess.graph)
 
@@ -92,16 +90,18 @@ class Agent():
         self.sess.run(self.update_target_network_params)
 
     def build_network(self):
+        model = Sequential()
+        model.add(Convolution2D(32, 8, 8, subsample=(4, 4), activation='relu', input_shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT)))
+        model.add(Convolution2D(64, 4, 4, subsample=(2, 2), activation='relu'))
+        model.add(Convolution2D(64, 3, 3, subsample=(1, 1), activation='relu'))
+        model.add(Flatten())
+        model.add(Dense(512, activation='relu'))
+        model.add(Dense(self.num_actions))
+
         s = tf.placeholder(tf.float32, [None, STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT])
-        inputs = Input(shape=(STATE_LENGTH, FRAME_WIDTH, FRAME_HEIGHT))
-        model = Convolution2D(32, 8, 8, subsample=(4, 4), activation='relu')(inputs)
-        model = Convolution2D(64, 4, 4, subsample=(2, 2), activation='relu')(model)
-        model = Convolution2D(64, 3, 3, subsample=(1, 1), activation='relu')(model)
-        model = Flatten()(model)
-        model = Dense(512, activation='relu')(model)
-        q_values = Dense(self.num_actions)(model)
-        m = Model(input=inputs, output=q_values)
-        return s, m
+        q_values = model(s)
+
+        return s, q_values, model
 
     def build_training_op(self, q_network_params):
         a = tf.placeholder(tf.int64, [None])
@@ -131,7 +131,7 @@ class Agent():
         action = self.repeated_action
 
         if self.t % ACTION_INTERVAL == 0:
-            if random.random() <= self.epsilon or self.t < INITIAL_REPLAY_SIZE:
+            if self.epsilon >= random.random() or self.t < INITIAL_REPLAY_SIZE:
                 action = random.randrange(self.num_actions)
             else:
                 action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
@@ -166,7 +166,7 @@ class Agent():
             # Save network
             if self.t % SAVE_INTERVAL == 0:
                 save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=(self.t + 1))
-                print 'Successfully saved: ', save_path
+                print('Successfully saved: ' + save_path)
 
         self.total_reward += reward
         self.total_q_max += np.max(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
@@ -191,10 +191,10 @@ class Agent():
                 mode = 'explore'
             else:
                 mode = 'exploit'
-            print 'EPISODE: {0:6d} / TIMESTEP: {1:8d} / DURATION: {2:5d} / EPSILON: {3:.5f} / TOTAL_REWARD: {4:3.0f} / AVG_MAX_Q: {5:2.4f} / AVG_LOSS: {6:.5f} / MODE: {7}'.format(
+            print('EPISODE: {0:6d} / TIMESTEP: {1:8d} / DURATION: {2:5d} / EPSILON: {3:.5f} / TOTAL_REWARD: {4:3.0f} / AVG_MAX_Q: {5:2.4f} / AVG_LOSS: {6:.5f} / MODE: {7}'.format(
                 self.episode + 1, self.t + 1, self.duration, self.epsilon,
                 self.total_reward, self.total_q_max / float(self.duration),
-                self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL)), mode)
+                self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL)), mode))
 
             self.total_reward = 0
             self.total_q_max = 0
@@ -241,15 +241,15 @@ class Agent():
 
     def setup_summaries(self):
         episode_total_reward = tf.Variable(0.)
-        tf.scalar_summary('Total Reward/Episode', episode_total_reward)
+        tf.scalar_summary('Episode/Total Reward', episode_total_reward)
         episode_avg_max_q = tf.Variable(0.)
-        tf.scalar_summary('Average Max Q Value/Episode', episode_avg_max_q)
+        tf.scalar_summary('Episode/Average Max Q Value', episode_avg_max_q)
         episode_duration = tf.Variable(0.)
-        tf.scalar_summary('Duration/Episode', episode_duration)
+        tf.scalar_summary('Episode/Duration', episode_duration)
         episode_avg_loss = tf.Variable(0.)
-        tf.scalar_summary('Average Loss/Episode', episode_avg_loss)
+        tf.scalar_summary('Episode/Average Loss', episode_avg_loss)
         summary_vars = [episode_total_reward, episode_avg_max_q, episode_duration, episode_avg_loss]
-        summary_placeholders = [tf.placeholder(tf.float32) for i in xrange(len(summary_vars))]
+        summary_placeholders = [tf.placeholder(tf.float32) for _ in xrange(len(summary_vars))]
         update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in xrange(len(summary_vars))]
         summary_op = tf.merge_all_summaries()
         return summary_placeholders, update_ops, summary_op
@@ -258,9 +258,9 @@ class Agent():
         checkpoint = tf.train.get_checkpoint_state(SAVE_NETWORK_PATH)
         if checkpoint and checkpoint.model_checkpoint_path:
             self.saver.restore(self.sess, checkpoint.model_checkpoint_path)
-            print 'Successfully loaded: ', checkpoint.model_checkpoint_path
+            print('Successfully loaded: ' + checkpoint.model_checkpoint_path)
         else:
-            print 'Training new network...'
+            print('Training new network...')
 
     def get_action_in_test(self, state):
         action = self.repeated_action
@@ -306,7 +306,7 @@ def main():
         # env.monitor.start('Breakout-v0-experiment-1')
         for episode in xrange(NUM_EPISODE_IN_TEST):
             terminal = False
-            last_observation = env.reset()
+            observation = env.reset()
             for _ in xrange(random.randint(1, NO_OP_STEPS)):
                 last_observation = observation
                 observation, _, _, _ = env.step(0)  # do nothing
