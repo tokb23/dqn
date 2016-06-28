@@ -111,10 +111,11 @@ class Agent():
         a_one_hot = tf.one_hot(a, self.num_actions, 1.0, 0.0)
         q_value = tf.reduce_sum(tf.mul(self.q_values, a_one_hot), reduction_indices=1)
 
-        # Clip the error term to be between -1 and 1
-        error = y - q_value
-        clipped_error = tf.clip_by_value(error, -1, 1)
-        loss = tf.reduce_mean(tf.square(clipped_error))
+        # Clip the error, the loss is quadratic when the error is in (-1, 1), and linear outside of that region
+        error = tf.abs(y - q_value)
+        quadratic_part = tf.clip_by_value(error, 0.0, 1.0)
+        linear_part = error - quadratic_part
+        loss = tf.reduce_mean(0.5 * tf.square(quadratic_part) + linear_part)
 
         optimizer = tf.train.RMSPropOptimizer(LEARNING_RATE, momentum=MOMENTUM, epsilon=MIN_GRAD)
         grad_update = optimizer.minimize(loss, var_list=q_network_weights)
