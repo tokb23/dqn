@@ -302,7 +302,7 @@ def main():
                 processed_observation = preprocess(observation, last_observation)
                 state = agent.run(state, action, reward, terminal, processed_observation)
     else:  # Test mode
-        # env.monitor.start('Breakout-v0-experiment-1')
+        # env.monitor.start(ENV_NAME + '-test')
         for _ in xrange(NUM_EPISODES_AT_TEST):
             terminal = False
             observation = env.reset()

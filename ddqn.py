@@ -11,12 +11,12 @@ from skimage.transform import resize
 from keras.models import Sequential
 from keras.layers import Convolution2D, Flatten, Dense
 
-os.environ['KERAS_BACKEND'] = 'tensorflow'
+KERAS_BACKEND = 'tensorflow'
 
 ENV_NAME = 'Breakout-v0'  # Environment name
 FRAME_WIDTH = 84  # Resized frame width
 FRAME_HEIGHT = 84  # Resized frame height
-NUM_EPISODES = 10000  # Number of episodes the agent plays
+NUM_EPISODES = 12000  # Number of episodes the agent plays
 STATE_LENGTH = 4  # Number of most recent frames to produce the input to the network
 GAMMA = 0.99  # Discount factor
 EXPLORATION_STEPS = 1000000  # Number of steps over which the initial value of epsilon is linearly annealed to its final value
@@ -35,9 +35,9 @@ SAVE_INTERVAL = 300000  # The frequency with which the network is saved
 NO_OP_STEPS = 30  # Maximum number of "do nothing" actions to be performed by the agent at the start of an episode
 LOAD_NETWORK = False
 TRAIN = True
-SAVE_NETWORK_PATH = './saved_networks'
-SAVE_SUMMARY_PATH = './summary'
-NUM_EPISODE_IN_TEST = 30  # Number of episodes the agent plays in test time
+SAVE_NETWORK_PATH = 'saved_networks/' + ENV_NAME
+SAVE_SUMMARY_PATH = 'summary/' + ENV_NAME
+NUM_EPISODES_AT_TEST = 30  # Number of episodes the agent plays at test time
 
 
 class Agent():
@@ -48,7 +48,7 @@ class Agent():
         self.t = 0
         self.repeated_action = 0
 
-        # Parameters used for summaries
+        # Parameters used for summary
         self.total_reward = 0
         self.total_q_max = 0
         self.total_loss = 0
@@ -56,7 +56,7 @@ class Agent():
         self.episode = 0
 
         # Create replay memory
-        self.D = deque()
+        self.replay_memory = deque()
 
         # Create q network
         self.s, self.q_values, q_network = self.build_network()
@@ -66,19 +66,19 @@ class Agent():
         self.st, self.target_q_values, target_network = self.build_network()
         target_network_weights = target_network.trainable_weights
 
-        # Define operation to periodically update target network
-        self.update_target_network_params = [target_network_weights[i].assign(q_network_weights[i]) for i in xrange(len(target_network_weights))]
+        # Define target network update operation
+        self.update_target_network = [target_network_weights[i].assign(q_network_weights[i]) for i in xrange(len(target_network_weights))]
 
         # Define loss and gradient update operation
         self.a, self.y, self.loss, self.grad_update = self.build_training_op(q_network_weights)
 
         self.sess = tf.InteractiveSession()
         self.saver = tf.train.Saver(q_network_weights)
-        self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summaries()
+        self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summary()
         self.summary_writer = tf.train.SummaryWriter(SAVE_SUMMARY_PATH, self.sess.graph)
 
         if not os.path.exists(SAVE_NETWORK_PATH):
-            os.mkdir(SAVE_NETWORK_PATH)
+            os.makedirs(SAVE_NETWORK_PATH)
 
         self.sess.run(tf.initialize_all_variables())
 
@@ -87,7 +87,7 @@ class Agent():
             self.load_network()
 
         # Initialize target network
-        self.sess.run(self.update_target_network_params)
+        self.sess.run(self.update_target_network)
 
     def build_network(self):
         model = Sequential()
@@ -103,7 +103,7 @@ class Agent():
 
         return s, q_values, model
 
-    def build_training_op(self, q_network_params):
+    def build_training_op(self, q_network_weights):
         a = tf.placeholder(tf.int64, [None])
         y = tf.placeholder(tf.float32, [None])
 
@@ -111,13 +111,14 @@ class Agent():
         a_one_hot = tf.one_hot(a, self.num_actions, 1.0, 0.0)
         q_value = tf.reduce_sum(tf.mul(self.q_values, a_one_hot), reduction_indices=1)
 
-        # Clip the error term to be between -1 and 1
-        error = y - q_value
-        clipped_error = tf.clip_by_value(error, -1, 1)
-        loss = tf.reduce_mean(tf.square(clipped_error))
+        # Clip the error, the loss is quadratic when the error is in (-1, 1), and linear outside of that region
+        error = tf.abs(y - q_value)
+        quadratic_part = tf.clip_by_value(error, 0.0, 1.0)
+        linear_part = error - quadratic_part
+        loss = tf.reduce_mean(0.5 * tf.square(quadratic_part) + linear_part)
 
         optimizer = tf.train.RMSPropOptimizer(LEARNING_RATE, momentum=MOMENTUM, epsilon=MIN_GRAD)
-        grad_update = optimizer.minimize(loss, var_list=q_network_params)
+        grad_update = optimizer.minimize(loss, var_list=q_network_weights)
 
         return a, y, loss, grad_update
 
@@ -150,9 +151,9 @@ class Agent():
         reward = np.sign(reward)
 
         # Store transition in replay memory
-        self.D.append((state, action, reward, next_state, terminal))
-        if len(self.D) > NUM_REPLAY_MEMORY:
-            self.D.popleft()
+        self.replay_memory.append((state, action, reward, next_state, terminal))
+        if len(self.replay_memory) > NUM_REPLAY_MEMORY:
+            self.replay_memory.popleft()
 
         if self.t >= INITIAL_REPLAY_SIZE:
             # Train network
@@ -161,11 +162,11 @@ class Agent():
 
             # Update target network
             if self.t % TARGET_UPDATE_INTERVAL == 0:
-                self.sess.run(self.update_target_network_params)
+                self.sess.run(self.update_target_network)
 
             # Save network
             if self.t % SAVE_INTERVAL == 0:
-                save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/network', global_step=(self.t + 1))
+                save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/' + ENV_NAME, global_step=(self.t))
                 print('Successfully saved: ' + save_path)
 
         self.total_reward += reward
@@ -173,7 +174,7 @@ class Agent():
         self.duration += 1
 
         if terminal:
-            # Write summaries
+            # Write summary
             if self.t >= INITIAL_REPLAY_SIZE:
                 stats = [self.total_reward, self.total_q_max / float(self.duration),
                         self.duration, self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL))]
@@ -192,7 +193,7 @@ class Agent():
             else:
                 mode = 'exploit'
             print('EPISODE: {0:6d} / TIMESTEP: {1:8d} / DURATION: {2:5d} / EPSILON: {3:.5f} / TOTAL_REWARD: {4:3.0f} / AVG_MAX_Q: {5:2.4f} / AVG_LOSS: {6:.5f} / MODE: {7}'.format(
-                self.episode + 1, self.t + 1, self.duration, self.epsilon,
+                self.episode + 1, self.t, self.duration, self.epsilon,
                 self.total_reward, self.total_q_max / float(self.duration),
                 self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL)), mode))
 
@@ -215,7 +216,7 @@ class Agent():
         y_batch = []
 
         # Sample random minibatch of transition from replay memory
-        minibatch = random.sample(self.D, BATCH_SIZE)
+        minibatch = random.sample(self.replay_memory, BATCH_SIZE)
         for data in minibatch:
             state_batch.append(data[0])
             action_batch.append(data[1])
@@ -239,15 +240,15 @@ class Agent():
 
         self.total_loss += loss
 
-    def setup_summaries(self):
+    def setup_summary(self):
         episode_total_reward = tf.Variable(0.)
-        tf.scalar_summary('Episode/Total Reward', episode_total_reward)
+        tf.scalar_summary(ENV_NAME + '/Total Reward/Episode', episode_total_reward)
         episode_avg_max_q = tf.Variable(0.)
-        tf.scalar_summary('Episode/Average Max Q Value', episode_avg_max_q)
+        tf.scalar_summary(ENV_NAME + '/Average Max Q/Episode', episode_avg_max_q)
         episode_duration = tf.Variable(0.)
-        tf.scalar_summary('Episode/Duration', episode_duration)
+        tf.scalar_summary(ENV_NAME + '/Duration/Episode', episode_duration)
         episode_avg_loss = tf.Variable(0.)
-        tf.scalar_summary('Episode/Average Loss', episode_avg_loss)
+        tf.scalar_summary(ENV_NAME + '/Average Loss/Episode', episode_avg_loss)
         summary_vars = [episode_total_reward, episode_avg_max_q, episode_duration, episode_avg_loss]
         summary_placeholders = [tf.placeholder(tf.float32) for _ in xrange(len(summary_vars))]
         update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in xrange(len(summary_vars))]
@@ -262,7 +263,7 @@ class Agent():
         else:
             print('Training new network...')
 
-    def get_action_in_test(self, state):
+    def get_action_at_test(self, state):
         action = self.repeated_action
 
         if self.t % ACTION_INTERVAL == 0:
@@ -288,12 +289,12 @@ def main():
     agent = Agent(num_actions=env.action_space.n)
 
     if TRAIN:  # Train mode
-        for eposode in xrange(NUM_EPISODES):
+        for _ in xrange(NUM_EPISODES):
             terminal = False
             observation = env.reset()
             for _ in xrange(random.randint(1, NO_OP_STEPS)):
                 last_observation = observation
-                observation, _, _, _ = env.step(0)  # do nothing
+                observation, _, _, _ = env.step(0)  # Do nothing
             state = agent.get_initial_state(observation, last_observation)
             while not terminal:
                 last_observation = observation
@@ -303,17 +304,17 @@ def main():
                 processed_observation = preprocess(observation, last_observation)
                 state = agent.run(state, action, reward, terminal, processed_observation)
     else:  # Test mode
-        # env.monitor.start('Breakout-v0-experiment-1')
-        for episode in xrange(NUM_EPISODE_IN_TEST):
+        # env.monitor.start(ENV_NAME + '-test')
+        for _ in xrange(NUM_EPISODES_AT_TEST):
             terminal = False
             observation = env.reset()
             for _ in xrange(random.randint(1, NO_OP_STEPS)):
                 last_observation = observation
-                observation, _, _, _ = env.step(0)  # do nothing
+                observation, _, _, _ = env.step(0)  # Do nothing
             state = agent.get_initial_state(observation, last_observation)
             while not terminal:
                 last_observation = observation
-                action = agent.get_action_in_test(state)
+                action = agent.get_action_at_test(state)
                 observation, _, terminal, _ = env.step(action)
                 env.render()
                 processed_observation = preprocess(observation, last_observation)
