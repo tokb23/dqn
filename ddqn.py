@@ -11,8 +11,6 @@ from skimage.transform import resize
 from keras.models import Sequential
 from keras.layers import Convolution2D, Flatten, Dense
 
-KERAS_BACKEND = 'tensorflow'
-
 ENV_NAME = 'Breakout-v0'  # Environment name
 FRAME_WIDTH = 84  # Resized frame width
 FRAME_HEIGHT = 84  # Resized frame height
@@ -26,7 +24,6 @@ INITIAL_REPLAY_SIZE = 20000  # Number of steps to populate the replay memory bef
 NUM_REPLAY_MEMORY = 400000  # Number of replay memory the agent uses for training
 BATCH_SIZE = 32  # Mini batch size
 TARGET_UPDATE_INTERVAL = 10000  # The frequency with which the target network is updated
-ACTION_INTERVAL = 4  # The agent sees only every 4th input
 TRAIN_INTERVAL = 4  # The agent selects 4 actions between successive updates
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
@@ -46,7 +43,6 @@ class Agent():
         self.epsilon = INITIAL_EPSILON
         self.epsilon_step = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
         self.t = 0
-        self.repeated_action = 0
 
         # Parameters used for summary
         self.total_reward = 0
@@ -67,10 +63,10 @@ class Agent():
         target_network_weights = target_network.trainable_weights
 
         # Define target network update operation
-        self.update_target_network = [target_network_weights[i].assign(q_network_weights[i]) for i in xrange(len(target_network_weights))]
+        self.update_target_network = [target_network_weights[i].assign(q_network_weights[i]) for i in range(len(target_network_weights))]
 
         # Define loss and gradient update operation
-        self.a, self.y, self.loss, self.grad_update = self.build_training_op(q_network_weights)
+        self.a, self.y, self.loss, self.grads_update = self.build_training_op(q_network_weights)
 
         self.sess = tf.InteractiveSession()
         self.saver = tf.train.Saver(q_network_weights)
@@ -118,25 +114,21 @@ class Agent():
         loss = tf.reduce_mean(0.5 * tf.square(quadratic_part) + linear_part)
 
         optimizer = tf.train.RMSPropOptimizer(LEARNING_RATE, momentum=MOMENTUM, epsilon=MIN_GRAD)
-        grad_update = optimizer.minimize(loss, var_list=q_network_weights)
+        grads_update = optimizer.minimize(loss, var_list=q_network_weights)
 
-        return a, y, loss, grad_update
+        return a, y, loss, grads_update
 
     def get_initial_state(self, observation, last_observation):
         processed_observation = np.maximum(observation, last_observation)
         processed_observation = np.uint8(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255)
-        state = [processed_observation for _ in xrange(STATE_LENGTH)]
+        state = [processed_observation for _ in range(STATE_LENGTH)]
         return np.stack(state, axis=0)
 
     def get_action(self, state):
-        action = self.repeated_action
-
-        if self.t % ACTION_INTERVAL == 0:
-            if self.epsilon >= random.random() or self.t < INITIAL_REPLAY_SIZE:
-                action = random.randrange(self.num_actions)
-            else:
-                action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
-            self.repeated_action = action
+        if self.epsilon >= random.random() or self.t < INITIAL_REPLAY_SIZE:
+            action = random.randrange(self.num_actions)
+        else:
+            action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
 
         # Anneal epsilon linearly over time
         if self.epsilon > FINAL_EPSILON and self.t >= INITIAL_REPLAY_SIZE:
@@ -148,7 +140,7 @@ class Agent():
         next_state = np.append(state[1:, :, :], observation, axis=0)
 
         # Clip all positive rewards at 1 and all negative rewards at -1, leaving 0 rewards unchanged
-        reward = np.sign(reward)
+        reward = np.clip(reward, -1, 1)
 
         # Store transition in replay memory
         self.replay_memory.append((state, action, reward, next_state, terminal))
@@ -166,7 +158,7 @@ class Agent():
 
             # Save network
             if self.t % SAVE_INTERVAL == 0:
-                save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/' + ENV_NAME, global_step=(self.t))
+                save_path = self.saver.save(self.sess, SAVE_NETWORK_PATH + '/' + ENV_NAME, global_step=self.t)
                 print('Successfully saved: ' + save_path)
 
         self.total_reward += reward
@@ -178,7 +170,7 @@ class Agent():
             if self.t >= INITIAL_REPLAY_SIZE:
                 stats = [self.total_reward, self.total_q_max / float(self.duration),
                         self.duration, self.total_loss / (float(self.duration) / float(TRAIN_INTERVAL))]
-                for i in xrange(len(stats)):
+                for i in range(len(stats)):
                     self.sess.run(self.update_ops[i], feed_dict={
                         self.summary_placeholders[i]: float(stats[i])
                     })
@@ -232,7 +224,7 @@ class Agent():
         for i in xrange(len(minibatch)):
             y_batch.append(reward_batch[i] + (1 - terminal_batch[i]) * GAMMA * target_q_values_batch[i][next_action_batch[i]])
 
-        loss, _ = self.sess.run([self.loss, self.grad_update], feed_dict={
+        loss, _ = self.sess.run([self.loss, self.grads_update], feed_dict={
             self.s: np.float32(np.array(state_batch) / 255.0),
             self.a: action_batch,
             self.y: y_batch
@@ -250,8 +242,8 @@ class Agent():
         episode_avg_loss = tf.Variable(0.)
         tf.scalar_summary(ENV_NAME + '/Average Loss/Episode', episode_avg_loss)
         summary_vars = [episode_total_reward, episode_avg_max_q, episode_duration, episode_avg_loss]
-        summary_placeholders = [tf.placeholder(tf.float32) for _ in xrange(len(summary_vars))]
-        update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in xrange(len(summary_vars))]
+        summary_placeholders = [tf.placeholder(tf.float32) for _ in range(len(summary_vars))]
+        update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in range(len(summary_vars))]
         summary_op = tf.merge_all_summaries()
         return summary_placeholders, update_ops, summary_op
 
@@ -264,14 +256,10 @@ class Agent():
             print('Training new network...')
 
     def get_action_at_test(self, state):
-        action = self.repeated_action
-
-        if self.t % ACTION_INTERVAL == 0:
-            if random.random() <= 0.05:
-                action = random.randrange(self.num_actions)
-            else:
-                action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
-            self.repeated_action = action
+        if random.random() <= 0.05:
+            action = random.randrange(self.num_actions)
+        else:
+            action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
 
         self.t += 1
 
@@ -289,10 +277,10 @@ def main():
     agent = Agent(num_actions=env.action_space.n)
 
     if TRAIN:  # Train mode
-        for _ in xrange(NUM_EPISODES):
+        for _ in range(NUM_EPISODES):
             terminal = False
             observation = env.reset()
-            for _ in xrange(random.randint(1, NO_OP_STEPS)):
+            for _ in range(random.randint(1, NO_OP_STEPS)):
                 last_observation = observation
                 observation, _, _, _ = env.step(0)  # Do nothing
             state = agent.get_initial_state(observation, last_observation)
@@ -305,10 +293,10 @@ def main():
                 state = agent.run(state, action, reward, terminal, processed_observation)
     else:  # Test mode
         # env.monitor.start(ENV_NAME + '-test')
-        for _ in xrange(NUM_EPISODES_AT_TEST):
+        for _ in range(NUM_EPISODES_AT_TEST):
             terminal = False
             observation = env.reset()
-            for _ in xrange(random.randint(1, NO_OP_STEPS)):
+            for _ in range(random.randint(1, NO_OP_STEPS)):
                 last_observation = observation
                 observation, _, _, _ = env.step(0)  # Do nothing
             state = agent.get_initial_state(observation, last_observation)
