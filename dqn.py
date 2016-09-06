@@ -24,7 +24,6 @@ INITIAL_REPLAY_SIZE = 20000  # Number of steps to populate the replay memory bef
 NUM_REPLAY_MEMORY = 400000  # Number of replay memory the agent uses for training
 BATCH_SIZE = 32  # Mini batch size
 TARGET_UPDATE_INTERVAL = 10000  # The frequency with which the target network is updated
-ACTION_INTERVAL = 4  # The agent sees only every 4th input
 TRAIN_INTERVAL = 4  # The agent selects 4 actions between successive updates
 LEARNING_RATE = 0.00025  # Learning rate used by RMSProp
 MOMENTUM = 0.95  # Momentum used by RMSProp
@@ -44,7 +43,6 @@ class Agent():
         self.epsilon = INITIAL_EPSILON
         self.epsilon_step = (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORATION_STEPS
         self.t = 0
-        self.repeated_action = 0
 
         # Parameters used for summary
         self.total_reward = 0
@@ -127,14 +125,10 @@ class Agent():
         return np.stack(state, axis=0)
 
     def get_action(self, state):
-        action = self.repeated_action
-
-        if self.t % ACTION_INTERVAL == 0:
-            if self.epsilon >= random.random() or self.t < INITIAL_REPLAY_SIZE:
-                action = random.randrange(self.num_actions)
-            else:
-                action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
-            self.repeated_action = action
+        if self.epsilon >= random.random() or self.t < INITIAL_REPLAY_SIZE:
+            action = random.randrange(self.num_actions)
+        else:
+            action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
 
         # Anneal epsilon linearly over time
         if self.epsilon > FINAL_EPSILON and self.t >= INITIAL_REPLAY_SIZE:
@@ -260,14 +254,10 @@ class Agent():
             print('Training new network...')
 
     def get_action_at_test(self, state):
-        action = self.repeated_action
-
-        if self.t % ACTION_INTERVAL == 0:
-            if random.random() <= 0.05:
-                action = random.randrange(self.num_actions)
-            else:
-                action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
-            self.repeated_action = action
+        if random.random() <= 0.05:
+            action = random.randrange(self.num_actions)
+        else:
+            action = np.argmax(self.q_values.eval(feed_dict={self.s: [np.float32(state / 255.0)]}))
 
         self.t += 1
 
