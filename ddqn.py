@@ -11,7 +11,7 @@ from skimage.transform import resize
 from keras.models import Sequential
 from keras.layers import Convolution2D, Flatten, Dense
 
-ENV_NAME = 'Breakout-v0'  # Environment name
+ENV_NAME = 'Pong-v0'  # Environment name
 FRAME_WIDTH = 84  # Resized frame width
 FRAME_HEIGHT = 84  # Resized frame height
 NUM_EPISODES = 12000  # Number of episodes the agent plays
@@ -30,7 +30,7 @@ MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
 SAVE_INTERVAL = 300000  # The frequency with which the network is saved
 NO_OP_STEPS = 30  # Maximum number of "do nothing" actions to be performed by the agent at the start of an episode
-LOAD_NETWORK = False
+LOAD_NETWORK = True
 TRAIN = True
 SAVE_NETWORK_PATH = 'saved_networks/' + ENV_NAME
 SAVE_SUMMARY_PATH = 'summary/' + ENV_NAME
@@ -120,7 +120,7 @@ class Agent():
 
     def get_initial_state(self, observation, last_observation):
         processed_observation = np.maximum(observation, last_observation)
-        processed_observation = np.uint8(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255)
+        processed_observation = np.uint8(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT), mode='reflect') * 255)
         state = [processed_observation for _ in range(STATE_LENGTH)]
         return np.stack(state, axis=0)
 
@@ -268,7 +268,7 @@ class Agent():
 
 def preprocess(observation, last_observation):
     processed_observation = np.maximum(observation, last_observation)
-    processed_observation = np.uint8(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT)) * 255)
+    processed_observation = np.uint8(resize(rgb2gray(processed_observation), (FRAME_WIDTH, FRAME_HEIGHT), mode='reflect') * 255)
     return np.reshape(processed_observation, (1, FRAME_WIDTH, FRAME_HEIGHT))
 
 
