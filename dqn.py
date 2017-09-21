@@ -30,7 +30,7 @@ MOMENTUM = 0.95  # Momentum used by RMSProp
 MIN_GRAD = 0.01  # Constant added to the squared gradient in the denominator of the RMSProp update
 SAVE_INTERVAL = 300000  # The frequency with which the network is saved
 NO_OP_STEPS = 30  # Maximum number of "do nothing" actions to be performed by the agent at the start of an episode
-LOAD_NETWORK = False
+LOAD_NETWORK = True
 TRAIN = True
 SAVE_NETWORK_PATH = 'saved_networks/' + ENV_NAME
 SAVE_SUMMARY_PATH = 'summary/' + ENV_NAME
@@ -71,12 +71,12 @@ class Agent():
         self.sess = tf.InteractiveSession()
         self.saver = tf.train.Saver(q_network_weights)
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summary()
-        self.summary_writer = tf.train.SummaryWriter(SAVE_SUMMARY_PATH, self.sess.graph)
+        self.summary_writer = tf.summary.FileWriter(SAVE_SUMMARY_PATH, self.sess.graph)
 
         if not os.path.exists(SAVE_NETWORK_PATH):
             os.makedirs(SAVE_NETWORK_PATH)
 
-        self.sess.run(tf.initialize_all_variables())
+        self.sess.run(tf.global_variables_initializer())
 
         # Load network
         if LOAD_NETWORK:
@@ -105,7 +105,7 @@ class Agent():
 
         # Convert action to one hot vector
         a_one_hot = tf.one_hot(a, self.num_actions, 1.0, 0.0)
-        q_value = tf.reduce_sum(tf.mul(self.q_values, a_one_hot), reduction_indices=1)
+        q_value = tf.reduce_sum(tf.multiply(self.q_values, a_one_hot), axis=1)
 
         # Clip the error, the loss is quadratic when the error is in (-1, 1), and linear outside of that region
         error = tf.abs(y - q_value)
@@ -232,17 +232,17 @@ class Agent():
 
     def setup_summary(self):
         episode_total_reward = tf.Variable(0.)
-        tf.scalar_summary(ENV_NAME + '/Total Reward/Episode', episode_total_reward)
+        tf.summary.scalar(ENV_NAME + '/Total Reward/Episode', episode_total_reward)
         episode_avg_max_q = tf.Variable(0.)
-        tf.scalar_summary(ENV_NAME + '/Average Max Q/Episode', episode_avg_max_q)
+        tf.summary.scalar(ENV_NAME + '/Average Max Q/Episode', episode_avg_max_q)
         episode_duration = tf.Variable(0.)
-        tf.scalar_summary(ENV_NAME + '/Duration/Episode', episode_duration)
+        tf.summary.scalar(ENV_NAME + '/Duration/Episode', episode_duration)
         episode_avg_loss = tf.Variable(0.)
-        tf.scalar_summary(ENV_NAME + '/Average Loss/Episode', episode_avg_loss)
+        tf.summary.scalar(ENV_NAME + '/Average Loss/Episode', episode_avg_loss)
         summary_vars = [episode_total_reward, episode_avg_max_q, episode_duration, episode_avg_loss]
         summary_placeholders = [tf.placeholder(tf.float32) for _ in range(len(summary_vars))]
         update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in range(len(summary_vars))]
-        summary_op = tf.merge_all_summaries()
+        summary_op = tf.summary.merge_all()
         return summary_placeholders, update_ops, summary_op
 
     def load_network(self):
