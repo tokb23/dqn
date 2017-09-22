@@ -5,7 +5,8 @@ This is an implementation of DQN (based on [Mnih et al., 2015](http://www.nature
 - gym (Atari environment)
 - scikit-image
 - keras
-- tensorflow
+- tensorflow (0.12 version recommanded)
+- Pyhton 3 (Preferable)
 
 ## Results
 This is the result of training of DQN for about 28 hours (12K episodes, 4.7 millions frames) on AWS EC2 g2.2xlarge instance.  
