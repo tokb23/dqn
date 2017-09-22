@@ -208,7 +208,7 @@ class Agent():
         y_batch = []
 
         # Sample random minibatch of transition from replay memory
-        minibatch = random.sample(self.replay_memory, BATCH_SIZE)
+        minibatch = random.sample(list(self.replay_memory), BATCH_SIZE)
         for data in minibatch:
             state_batch.append(data[0])
             action_batch.append(data[1])
