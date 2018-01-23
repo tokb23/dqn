@@ -2,3 +2,4 @@ summary
 *.py[cod]
 .DS_Store
 .Python
+saved_networks
